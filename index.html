@@ -4348,18 +4348,24 @@ async function procesarBloquetraspasos(datos) {
                 productosConActualizacionCantidad++;
                 console.log(`      ↗️ Actualizado cantidad en pedido: ${cantidadAnterior} → ${pedidoExistente.cantidad}`);
             } else {
-                // Agregar nueva llanta al pedido
+                // Agregar nueva llanta al pedido (asegurar peso/volumen por unidad antes de multiplicar)
                 productosEnPedidosActuales++;
+                let unidad = {
+                    descripcion: llanta.descripcion,
+                    volumen: Number(safeNum(getField(llanta,'volumen'))) || 0,
+                    peso: Number(safeNum(getField(llanta,'peso'))) || 0
+                };
+                unidad = await ensurePesoVolumen(unidad);
                 pedidosEnCurso.push({
                     clave: llanta.clave,
                     descripcion: llanta.descripcion,
                     linea: llanta.linea || '',
                     cantidad: cantidad,
-                    peso: safeNum(getField(llanta,'peso')) * cantidad,
-                    volumen: safeNum(getField(llanta,'volumen')) * cantidad,
+                    peso: unidad.peso * cantidad,
+                    volumen: unidad.volumen * cantidad,
                     valor: safeNum(getField(llanta,'valor')) * cantidad
                 });
-                console.log(`      ✨ Agregado nuevo al pedido actual`);
+                console.log(`      ✨ Agregado nuevo al pedido actual (con cálculo de unidad asegurado)`);
             }
         } else {
             // Si la llanta no existe en INVENTARIO, agregar una entrada temporal al pedido
@@ -4374,16 +4380,23 @@ async function procesarBloquetraspasos(datos) {
             console.log(`      Valores calculados/default: volumen=${volumenCalc}m³, peso=${pesoCalc}kg`);
 
             productosNuevos++;
+            // Crear unidad temporal y asegurarse de que tenga peso/volumen por unidad
+            let unidadTemp = {
+                descripcion: descripcionProd,
+                volumen: volumenCalc,
+                peso: pesoCalc
+            };
+            unidadTemp = await ensurePesoVolumen(unidadTemp);
             pedidosEnCurso.push({
                 clave: codigoProd || '',
                 descripcion: descripcionProd,
                 linea: determinarTipoLlanta(descripcionProd),
                 cantidad: cantidad,
-                peso: pesoCalc * cantidad,
-                volumen: volumenCalc * cantidad,
+                peso: unidadTemp.peso * cantidad,
+                volumen: unidadTemp.volumen * cantidad,
                 valor: 0
             });
-            console.log(`      ✨ Agregado temporal al pedido (sin INVENTARIO) con Vol=${volumenCalc * cantidad}m³, Peso=${pesoCalc * cantidad}kg`);
+            console.log(`      ✨ Agregado temporal al pedido (sin INVENTARIO) con Vol=${unidadTemp.volumen * cantidad}m³, Peso=${unidadTemp.peso * cantidad}kg`);
 
             // Preparar para agregar al INVENTARIO (si tiene código y descripción)
             if (codigoProd && descripcionProd) {
@@ -4391,8 +4404,8 @@ async function procesarBloquetraspasos(datos) {
                     Código: codigoProd,
                     Descripción: descripcionProd,
                     Cantidad: cantidad,
-                    volumen: volumenCalc,
-                    peso: pesoCalc
+                    volumen: unidadTemp.volumen,
+                    peso: unidadTemp.peso
                 });
             }
         }
@@ -5432,6 +5445,18 @@ function searchINVENTARIO() {
         linea: linea || ''
     };
 
+    // Si no se proporcionaron peso/volumen, intentar calcularlos antes de guardar
+    if (!nuevaLlanta.peso || !nuevaLlanta.volumen) {
+        try {
+            const asegurada = await ensurePesoVolumen({ descripcion: nuevaLlanta.descripcion, peso: Number(nuevaLlanta.peso) || 0, volumen: Number(nuevaLlanta.volumen) || 0 });
+            nuevaLlanta.peso = asegurada.peso;
+            nuevaLlanta.volumen = asegurada.volumen;
+        } catch (e) {
+            console.warn('No se pudo calcular peso/volumen al agregar manualmente la llanta:', e);
+            // dejar los valores tal cual (la API los puede aceptar como cadena vacía)
+        }
+    }
+
     try {
         const response = await fetch('https://sheetdb.io/api/v1/et3sp6auabhw7', {
             method: 'POST',
@@ -5507,10 +5532,17 @@ function searchINVENTARIO() {
             if (!existe) {
                 // Preparar objeto mínimo para agregar
                 const nuevaClave = code || generarNuevoIdINVENTARIO();
-                const nueva = {
+                let nueva = {
                     clave: nuevaClave,
                     descripcion: desc || 'Sin descripción'
                 };
+
+                // Asegurar peso/volumen antes de enviar al servidor
+                try {
+                    nueva = await ensurePesoVolumen(nueva);
+                } catch (e) {
+                    console.warn('ensurePesoVolumen falló para nueva entrada en asegurarLlantasEnINVENTARIO', nueva.descripcion, e);
+                }
 
                 try {
                     const res = await fetch(base, {
@@ -8248,6 +8280,8 @@ async function agregarPedido() {
                 valor: 0
             };
             console.warn(`[TEMPORAL] Creado item temporal para código ${codigo}: vol=${volumenTemp}m³, peso=${pesoTemp}kg`);
+            // Asegurar que el item temporal tenga valores unitarios válidos
+            llanta = await ensurePesoVolumen(llanta);
         }
     }
 
@@ -8273,10 +8307,18 @@ async function agregarPedido() {
 
     // Agregar al pedido
     const pedidoExistente = pedidosEnCurso.find(p => p.clave === llanta.clave);
+    // Asegurar valores unitarios válidos antes de actualizar/insertar
+    let unidad = {
+        descripcion: llanta.descripcion,
+        volumen: Number(safeNum(getField(llanta,'volumen'))) || Number(safeNum(llanta.volumen)) || 0,
+        peso: Number(safeNum(getField(llanta,'peso'))) || Number(safeNum(llanta.peso)) || 0
+    };
+    unidad = await ensurePesoVolumen(unidad);
+
     if (pedidoExistente) {
         pedidoExistente.cantidad += cantidad;
-        pedidoExistente.peso = safeNum(getField(llanta,'peso')) * pedidoExistente.cantidad;
-        pedidoExistente.volumen = safeNum(getField(llanta,'volumen')) * pedidoExistente.cantidad;
+        pedidoExistente.peso = unidad.peso * pedidoExistente.cantidad;
+        pedidoExistente.volumen = unidad.volumen * pedidoExistente.cantidad;
         pedidoExistente.valor = safeNum(getField(llanta,'valor')) * pedidoExistente.cantidad;
     } else {
         pedidosEnCurso.push({
@@ -8284,8 +8326,8 @@ async function agregarPedido() {
             descripcion: llanta.descripcion,
             linea: llanta.linea || '',
             cantidad: cantidad,
-            peso: safeNum(getField(llanta,'peso')) * cantidad,
-            volumen: safeNum(getField(llanta,'volumen')) * cantidad,
+            peso: unidad.peso * cantidad,
+            volumen: unidad.volumen * cantidad,
             valor: safeNum(getField(llanta,'valor')) * cantidad
         });
     }
@@ -8512,6 +8554,38 @@ function calcularTotalesPedidos() {
     });
 
     return { totalCantidad, totalVolumen, totalPeso, totalValor };
+}
+// Helper: asegura que un objeto de llanta tenga valores unitarios de peso y volumen
+async function ensurePesoVolumen(item) {
+    if (!item) return item;
+    // Intentar leer valores existentes
+    let volumen = Number(safeNum(item.volumen)) || 0;
+    let peso = Number(safeNum(item.peso)) || 0;
+    const desc = (item.descripcion || item.Descripción || item.Descripcion || '').toString();
+
+    // Si falta volumen/peso intentar calcular por descripción
+    if ((!volumen || volumen === 0) && desc) {
+        try {
+            volumen = Number(await calcularVolumenLlanta(desc)) || 0;
+        } catch (e) {
+            volumen = 0;
+        }
+    }
+    if ((!peso || peso === 0) && desc) {
+        try {
+            peso = Number(await calcularPesoLlanta(desc)) || 0;
+        } catch (e) {
+            peso = 0;
+        }
+    }
+
+    // Aplicar defaults si siguen en 0
+    if (!volumen || volumen === 0) volumen = 0.030; // m³ por unidad por defecto
+    if (!peso || peso === 0) peso = 10; // kg por unidad por defecto
+
+    item.volumen = Number(volumen);
+    item.peso = Number(peso);
+    return item;
 }
 // Agregar después de las funciones existentes
 function verificacionRapida() {
@@ -12197,13 +12271,27 @@ async function agregarNuevosProductosAlINVENTARIO(productos) {
                     if (descNorm && descripcionesINVENTARIO.has(descNorm)) {
                         omitidosPorDescripcion.push({ codigo: claveNorm || '(sin clave)', descripcion: desc, existeConClave: descripcionesINVENTARIO.get(descNorm) });
                     } else {
-                        productosValidos.push({
+                        // Construir objeto y asegurar peso/volumen unitarios
+                        let nuevoProd = {
                             clave: claveNorm,
                             descripcion: desc,
                             linea: determinarTipoLlanta(desc),
                             peso: Number(pesoCalc) || 0,
                             volumen: Number(volumenCalc) || 0,
                             valor: '' // Para llenado manual
+                        };
+                        try {
+                            nuevoProd = await ensurePesoVolumen(nuevoProd);
+                        } catch (e) {
+                            console.warn('ensurePesoVolumen falló para', desc, e);
+                        }
+                        productosValidos.push({
+                            clave: nuevoProd.clave,
+                            descripcion: nuevoProd.descripcion,
+                            linea: nuevoProd.linea,
+                            peso: Number(nuevoProd.peso) || 0,
+                            volumen: Number(nuevoProd.volumen) || 0,
+                            valor: nuevoProd.valor || ''
                         });
                     }
 

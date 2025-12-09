@@ -1315,6 +1315,58 @@ document.addEventListener('DOMContentLoaded', function() {
 
             <!-- Sección de Distribución Múltiple -->
             <script>
+                // === SISTEMA DE BLOQUEO DE UNIDADES ASIGNADAS ===
+                // Mantiene un registro de qué llantas fueron asignadas a qué unidades
+                // para que cuando cambies de unidad, las llantas asignadas NO se muevan
+                let distribucionBloqueada = []; 
+                // Formato: [ { economico: "01", llantas: [...], volumen: X, peso: Y }, ... ]
+                
+                // === VALIDACIÓN: ASEGURAR QUE LAS LLANTAS NO DESAPARECEN ===
+                function validarConteoLlantas(llantasOriginales, unidadesActuales, distribucionBloqueadaParam) {
+                    let totalOriginal = 0;
+                    let totalEnUnidades = 0;
+                    let totalEnBloqueadas = 0;
+                    
+                    // Contar llantas originales
+                    for (const ll of llantasOriginales) {
+                        totalOriginal += parseInt(ll.Cantidad || ll.cantidad || ll.CantidadLL || 1);
+                    }
+                    
+                    // Contar llantas en unidades actuales
+                    for (const unidad of unidadesActuales) {
+                        if (unidad.llantas?.length > 0) {
+                            for (const ll of unidad.llantas) {
+                                totalEnUnidades += parseInt(ll.cantidad || 1);
+                            }
+                        }
+                    }
+                    
+                    // Contar llantas en distribucionBloqueada
+                    for (const bloqueada of (distribucionBloqueadaParam || [])) {
+                        if (bloqueada.llantas?.length > 0) {
+                            for (const ll of bloqueada.llantas) {
+                                totalEnBloqueadas += parseInt(ll.cantidad || 1);
+                            }
+                        }
+                    }
+                    
+                    const totalActual = totalEnUnidades + totalEnBloqueadas;
+                    const diferencia = totalOriginal - totalActual;
+                    
+                    const resultado = {
+                        totalOriginal: totalOriginal,
+                        totalEnUnidades: totalEnUnidades,
+                        totalEnBloqueadas: totalEnBloqueadas,
+                        totalActual: totalActual,
+                        diferencia: diferencia,
+                        valido: Math.abs(diferencia) <= 1, // permitir pequeño margen de error
+                        mensaje: diferencia === 0 ? '✅ Conteo correcto' : `⚠️ FALTA ${Math.abs(diferencia)} LLANTAS`
+                    };
+                    
+                    console.log('📊 [VALIDACIÓN] Conteo de llantas:', resultado);
+                    return resultado;
+                }
+                
                 // Funciones específicas para la distribución múltiple
                 async function calcularDistribucionMultiple(llantas) {
                     console.log('Calculando distribución para:', llantas);
@@ -1381,7 +1433,43 @@ document.addEventListener('DOMContentLoaded', function() {
                     let llantasPendientes = llantasNorm.map(l => ({
                         ...l,
                         cantidadPendiente: parseInt(l.cantidad || l.Cantidad || 1)
-                    }));  
+                    }));
+                    
+                    // === RESTAR LAS LLANTAS YA BLOQUEADAS ===
+                    if (distribucionBloqueada && distribucionBloqueada.length > 0) {
+                        console.log('[BLOQUEO] Restando llantas bloqueadas antes de redistribuir:', distribucionBloqueada);
+                        
+                        for (const bloqueada of distribucionBloqueada) {
+                            if (bloqueada.llantas && Array.isArray(bloqueada.llantas)) {
+                                for (const llantaBloqueada of bloqueada.llantas) {
+                                    const desc = llantaBloqueada.descripcion || '';
+                                    const cant = llantaBloqueada.cantidad || 0;
+                                    
+                                    // Buscar y reducir en llantasPendientes
+                                    for (let i = 0; i < llantasPendientes.length; i++) {
+                                        const disponible = llantasPendientes[i];
+                                        const descDisponible = disponible.Descripción || disponible.descripcion || '';
+                                        
+                                        if (descDisponible === desc || descDisponible.includes(desc) || desc.includes(descDisponible)) {
+                                            disponible.cantidadPendiente = Math.max(0, disponible.cantidadPendiente - cant);
+                                            console.log(`  - Restado ${cant}x ${desc} de pendientes. Quedan: ${disponible.cantidadPendiente}`);
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                            
+                            // Restar también del volumen y peso restantes
+                            volumenRestante -= (bloqueada.volumen || 0);
+                            pesoRestante -= (bloqueada.peso || 0);
+                        }
+                        
+                        console.log('[BLOQUEO] Después de restar bloqueadas:', {
+                            volumenRestante: volumenRestante.toFixed(2),
+                            pesoRestante: pesoRestante.toFixed(2),
+                            llantasPendientes: llantasPendientes.map(l => ({ desc: l.Descripción || l.descripcion, cant: l.cantidadPendiente }))
+                        });
+                    }  
 
                     while(volumenRestante > 0 && pesoRestante > 0) {
                         // Encontrar la mejor unidad que pueda llevar al menos el 30% de la carga restante
@@ -1476,6 +1564,91 @@ document.addEventListener('DOMContentLoaded', function() {
                         });
                     }
 
+                    // === PASO CRÍTICO: ASIGNAR CUALQUIER LLANTA RESTANTE A LA ÚLTIMA UNIDAD ===
+                    // Si hay llantas que no fueron distribuidas por restricciones de volumen/peso,
+                    // asignarlas a la unidad más grande disponible para que no se pierdan
+                    const llantasNoAsignadas = llantasPendientes.filter(l => (l.cantidadPendiente || 0) > 0);
+                    if (llantasNoAsignadas.length > 0) {
+                        console.log(`⚠️ [CRÍTICO] ${llantasNoAsignadas.map(l => l.cantidadPendiente + 'x ' + (l.descripcion || l.Descripción)).join(', ')} sin asignar`);
+                        
+                        // Obtener la unidad más grande disponible
+                        const unidadesDisponibles = await obtenerUnidadesDisponibles();
+                        const mayorUnidad = unidadesDisponibles.reduce((max, u) => {
+                            const capMax = (parseNumber(max.capacidadVolumen) || 0) + (parseNumber(max.capacidadPeso) || 0);
+                            const capU = (parseNumber(u.capacidadVolumen) || 0) + (parseNumber(u.capacidadPeso) || 0);
+                            return capU > capMax ? u : max;
+                        });
+                        
+                        // Buscar si ya existe una distribución para esta unidad
+                        let existente = distribucion.find(d => d.economico === mayorUnidad.economico);
+                        if (!existente) {
+                            existente = {
+                                unidad: mayorUnidad.unidad,
+                                economico: mayorUnidad.economico,
+                                llantasEstimadas: 0,
+                                volumen: 0,
+                                peso: 0,
+                                eficiencia: 0,
+                                descripciones: '',
+                                llantas: []
+                            };
+                            distribucion.push(existente);
+                        }
+                        
+                        // Agregar todas las llantas restantes
+                        let llantasAgregadas = 0;
+                        let volumenAgregado = 0;
+                        let pesoAgregado = 0;
+                        const descripcionesExtra = [];
+                        
+                        for (const llanta of llantasNoAsignadas) {
+                            if ((llanta.cantidadPendiente || 0) <= 0) continue;
+                            
+                            const cant = llanta.cantidadPendiente;
+                            const vol = parseNumber(llanta.volumen || llanta.Volumen || 0) || 0;
+                            const peso = parseNumber(llanta.peso || llanta.Peso || 0) || 0;
+                            
+                            // Buscar si ya existe en el array de llantas de la unidad
+                            let encontrada = false;
+                            if (existente.llantas && Array.isArray(existente.llantas)) {
+                                for (const ll of existente.llantas) {
+                                    if ((ll.descripcion || ll.Descripción) === (llanta.descripcion || llanta.Descripción)) {
+                                        ll.cantidad = (ll.cantidad || 0) + cant;
+                                        encontrada = true;
+                                        break;
+                                    }
+                                }
+                            }
+                            
+                            if (!encontrada) {
+                                if (!existente.llantas) existente.llantas = [];
+                                existente.llantas.push({
+                                    cantidad: cant,
+                                    descripcion: llanta.descripcion || llanta.Descripción || '',
+                                    linea: llanta.linea || llanta.Linea || ''
+                                });
+                            }
+                            
+                            llantasAgregadas += cant;
+                            volumenAgregado += vol * cant;
+                            pesoAgregado += peso * cant;
+                            descripcionesExtra.push(`${cant}x ${llanta.descripcion || llanta.Descripción || ''}`);
+                        }
+                        
+                        // Actualizar totales
+                        existente.llantasEstimadas = (existente.llantasEstimadas || 0) + llantasAgregadas;
+                        existente.volumen = (existente.volumen || 0) + volumenAgregado;
+                        existente.peso = (existente.peso || 0) + pesoAgregado;
+                        if (descripcionesExtra.length > 0) {
+                            existente.descripciones = (existente.descripciones ? existente.descripciones + '\n' : '') + descripcionesExtra.join('\n');
+                        }
+                        
+                        console.log(`✅ [RESCATADAS] ${llantasAgregadas} llantas agregadas a ${mayorUnidad.economico}:`, {
+                            volumen: volumenAgregado.toFixed(2),
+                            peso: pesoAgregado.toFixed(2)
+                        });
+                    }
+
                     return distribucion;
                 }
 
@@ -1488,19 +1661,30 @@ document.addEventListener('DOMContentLoaded', function() {
                     const unidadesBloquedadas = window.unidadesBloquedadas || {};
                     console.log('[BLOQUEO] Unidades bloqueadas actualmente:', Object.keys(unidadesBloquedadas));
                     
-                    // Si hay bloqueados y se solicita respetarlos, extraerlos de distribucion
+                    // Si hay bloqueados y se solicita respetarlos, construir distribucionBloqueada
+                    // directamente desde `window.unidadesBloquedadas` para usar el detalle exacto
+                    // de llantas y evitar inconsistencias.
                     let distribucionBloqueada = [];
                     let distribucionParaRedistribuir = [];
-                    
+
                     if (respetarBloqueados && Object.keys(unidadesBloquedadas).length > 0) {
-                        for (const item of distribucion) {
-                            if (unidadesBloquedadas[item.economico]) {
-                                console.log(`[MANTENER] ${item.economico} será mantenido como estaba (${item.llantasEstimadas} llantas)`);
-                                distribucionBloqueada.push({ ...item }); // copiar para no mutar original
-                            } else {
-                                distribucionParaRedistribuir.push(item);
-                            }
+                        // Construir bloqueados a partir del objeto global (fuente de la verdad)
+                        for (const key of Object.keys(unidadesBloquedadas)) {
+                            const u = unidadesBloquedadas[key];
+                            const bloqueadoItem = {
+                                unidad: u.unidad || '',
+                                economico: u.economico || key,
+                                llantasEstimadas: u.llantasAsignadas || 0,
+                                volumen: u.volumen || 0,
+                                peso: u.peso || 0,
+                                descripciones: (u.llantas && u.llantas.map(l => `${l.cantidad}x ${l.descripcion || l.Descripción || ''}`).join('\n')) || '',
+                                llantas: u.llantas ? JSON.parse(JSON.stringify(u.llantas)) : []
+                            };
+                            distribucionBloqueada.push(bloqueadoItem);
                         }
+
+                        // Los items a redistribuir son los que NO estén bloqueados
+                        distribucionParaRedistribuir = distribucion.filter(d => !unidadesBloquedadas[String(d.economico)]);
                     } else {
                         distribucionParaRedistribuir = [...distribucion];
                     }
@@ -1535,18 +1719,20 @@ document.addEventListener('DOMContentLoaded', function() {
                         llantas: llantasTotal
                     });
 
-                    // RESTAR las llantas ya asignadas a unidades bloqueadas
+                    // RESPETO A BLOQUEADOS: no restar de los totales directamente
+                    // (restar cantidades en el arreglo de llantasDisponibles más abajo)
                     if (distribucionBloqueada.length > 0) {
                         for (const bloqueada of distribucionBloqueada) {
                             const llantasEnBloqueada = bloqueada.llantasEstimadas || 0;
                             const volumenEnBloqueada = bloqueada.volumen || 0;
                             const pesoEnBloqueada = bloqueada.peso || 0;
                             
-                            llantasTotal -= llantasEnBloqueada;
-                            volumenTotal -= volumenEnBloqueada;
-                            pesoTotal -= pesoEnBloqueada;
-                            
-                            console.log(`[BLOQUEO] Restando ${llantasEnBloqueada} llantas (${volumenEnBloqueada.toFixed(3)}m³, ${pesoEnBloqueada.toFixed(2)}kg) de ${bloqueada.economico}`);
+                            // No restamos de los totales globales aquí porque eso puede
+                            // provocar que llantas restantes "desaparezcan" si las
+                            // estimaciones de volumen/peso no coinciden exactamente.
+                            // En su lugar, descontaremos las cantidades de
+                            // `llantasDisponibles` más adelante (ya existe esa lógica).
+                            console.log(`[BLOQUEO] Manteniendo ${llantasEnBloqueada} llantas bloqueadas en ${bloqueada.economico} (no se restan de totales)`);
                         }
                     }
 
@@ -1967,22 +2153,30 @@ document.addEventListener('DOMContentLoaded', function() {
                                 
                                 if (itemActual) {
                                     const unidadNueva = unidadesFlota.find(u => String(u.codigo) === String(nuevoEconomico));
+                                    const economicoPrevio = String(itemActual.economico);
+                                    
                                     itemActual.economico = nuevoEconomico;
                                     itemActual.unidad = unidadNueva ? unidadNueva.nombre : itemActual.unidad;
                                     
-                                    // === BLOQUEAR ESTA UNIDAD CON SU CANTIDAD ACTUAL ===
-                                    window.unidadesBloquedadas[nuevoEconomico] = {
-                                        economico: nuevoEconomico,
-                                        llantasAsignadas: itemActual.llantasEstimadas || 0,
-                                        volumen: itemActual.volumen || 0,
-                                        peso: itemActual.peso || 0,
-                                        unidad: itemActual.unidad,
-                                        bloqueadoEn: new Date().toLocaleTimeString()
-                                    };
-                                    console.log(`[✅ BLOQUEADO] Unidad ${nuevoEconomico} bloqueada con ${itemActual.llantasEstimadas} llantas`, window.unidadesBloquedadas[nuevoEconomico]);
+                                    // === NO BLOQUEAR LA NUEVA UNIDAD INMEDIATAMENTE ===
+                                    // En su lugar, simplemente actualizar el económico en el item.
+                                    // La nueva unidad se recalculará libremente sin ser "fija".
+                                    // Esto evita que ambas (vieja y nueva) aparezcan como bloqueadas.
+                                    
+                                    // Si había una unidad anterior diferente, desbloquearla
+                                    if (typeof window.unidadesBloquedadas === 'undefined') window.unidadesBloquedadas = {};
+                                    
+                                    if (economicoPrevio && economicoPrevio !== String(nuevoEconomico)) {
+                                        try {
+                                            console.log(`[🔓 DESBLOQUEANDO] ${economicoPrevio} (cambio a ${nuevoEconomico})`);
+                                            delete window.unidadesBloquedadas[economicoPrevio];
+                                        } catch (e) { console.warn('Error desbloqueando:', e); }
+                                    }
+                                    
+                                    console.log(`[🔄 CAMBIO REGISTRADO] ${economicoPrevio} → ${nuevoEconomico}`);
                                 }
 
-                                // Recalcular distribución completa (ahora respeta bloqueados)
+                                // Recalcular distribución completa (respeta bloqueados SI LOS HAY)
                                 console.log('📦 Cambio de unidad detectado. Recalculando (respetando bloqueados)...');
                                 const distribucionRecalculada = await recalcularDistribucionCompleta(distribucion, unidadesFlota, { 
                                     prioritizeEconomico: nuevoEconomico,
@@ -1995,6 +2189,12 @@ document.addEventListener('DOMContentLoaded', function() {
 
                                 // Redibujar tabla
                                 actualizarTablaDistribucion(distribucion);
+
+                                // Mantener la sección de Distribución Sugerida abierta después del cambio
+                                try {
+                                    const acordeon = document.getElementById('collapseDistribucionMultiple');
+                                    if (acordeon && !acordeon.classList.contains('show')) acordeon.classList.add('show');
+                                } catch (e) { /* ignorar */ }
 
                                 // Actualizar totales visibles
                                 try { actualizarTotalesDistribucion(distribucion); } catch(e){ console.warn(e); }
@@ -2288,7 +2488,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     <div class="tab-pane fade show active" id="traspasosNormales">
                         <div style="padding:8px;">
                             <iframe src="https://cubicaje-tres-siglos.github.io/ESCANEOTRASPASOS/"
-                                    style="width:100%; height:400px; border:none; border-radius:8px;"
+                                    style="width:100%; height:400px; border:none; border-radius:8px;" 
                                     title="Escaneo de Traspasos"></iframe>
                             <!-- Contenedor estático para los bloques de traspasos (evita creación dinámica y warnings) -->
                             <div id="traspasosGroupsContainer" class="mt-3"></div>
@@ -7762,20 +7962,186 @@ function searchINVENTARIO() {
                         const boton = contenedorDetalles.querySelector('button[onclick^="apartarDistribucionCompleta"]');
                         selects.forEach(sel => {
                             sel.removeEventListener('change', sel._handler || (() => {}));
-                            const handler = function () {
+                            
+                            // === HANDLER UNIFICADO CON CAPACIDAD INTELIGENTE ===
+                            const handler = async function() {
                                 const idx = parseInt(this.dataset.idx, 10);
+                                const unidadAnterior = unidadesValidas[idx];
                                 const nuevoEco = this.value;
-                                // Buscar unidad en la flota
-                                const unidadSel = (typeof obtenerUnidadesFlota === 'function' ? obtenerUnidadesFlota() : []).find(u => String(u.codigo) === String(nuevoEco));
+                                const unidadesFlota = typeof obtenerUnidadesFlota === 'function' ? obtenerUnidadesFlota() : [];
+                                
+                                console.log(`\n🔄 [CAMBIO UNIDAD] Índice ${idx}: ${unidadAnterior?.economico || '?'} → ${nuevoEco}`);
+                                
+                                // === OBTENER CAPACIDADES ===
+                                const unidadNueva = unidadesFlota.find(u => String(u.codigo) === String(nuevoEco));
+                                const capVolumeNueva = parseNumber(unidadNueva?.capacidadVolumen) || 0;
+                                const capPesoNueva = parseNumber(unidadNueva?.capacidadPeso) || 0;
+                                const capVolumenVieja = parseNumber(unidadAnterior?.capacidadVolumen) || 0;
+                                const capPesoVieja = parseNumber(unidadAnterior?.capacidadPeso) || 0;
+                                
+                                console.log(`📦 Capacidades: Vieja ${capVolumenVieja}m³/${capPesoVieja}kg → Nueva ${capVolumeNueva}m³/${capPesoNueva}kg`);
+                                
+                                // === PASO 1: LIMPIAR BLOQUEADOS PARA EVITAR DUPLICADOS ===
+                                // En lugar de bloquear la unidad anterior, limpiar bloqueados viejos
+                                // para que la recalculación sea fresca sin duplicados.
+                                if (typeof window.unidadesBloquedadas === 'undefined') window.unidadesBloquedadas = {};
+                                
+                                // Eliminar bloqueados para este y otros económicos que no estén en la distribución
+                                try {
+                                    delete window.unidadesBloquedadas[unidadAnterior?.economico];
+                                    console.log(`[🔓 LIMPIEZA] Eliminado bloqueo previo de ${unidadAnterior?.economico}`);
+                                } catch (e) { console.warn('Error limpiando bloqueos:', e); }
+                                
+                                console.log('[ESTADO] window.unidadesBloquedadas después de limpieza:', Object.keys(window.unidadesBloquedadas));
+                                
+                                // === PASO 2: ACTUALIZAR UNIDAD EN unidadesValidas ===
                                 if (unidadesValidas[idx]) {
                                     unidadesValidas[idx].economico = nuevoEco;
-                                    unidadesValidas[idx].unidad = unidadSel ? unidadSel.nombre : unidadesValidas[idx].unidad;
+                                    unidadesValidas[idx].unidad = unidadNueva?.nombre || unidadesValidas[idx].unidad;
+                                    unidadesValidas[idx].capacidadVolumen = capVolumeNueva;
+                                    unidadesValidas[idx].capacidadPeso = capPesoNueva;
+                                    
+                                    // Transferir llantas de la unidad anterior
+                                    if (unidadAnterior?.llantas?.length > 0) {
+                                        console.log(`📤 [TRANSFERENCIA] Moviendo ${unidadAnterior.llantas.length} llantas a ${nuevoEco}`);
+                                        unidadesValidas[idx].llantas = JSON.parse(JSON.stringify(unidadAnterior.llantas));
+                                        unidadesValidas[idx].volumenAsignado = unidadAnterior.volumenAsignado || 0;
+                                        unidadesValidas[idx].pesoAsignado = unidadAnterior.pesoAsignado || 0;
+                                        unidadesValidas[idx].llantasEstimadas = unidadAnterior.llantasEstimadas || 0;
+                                    }
                                 }
-                                // Actualizar celda y dataset del botón
+                                
+                                // === PASO 3: INTENTAR LLENAR EXTRA CAPACIDAD SI NUEVA > VIEJA ===
+                                const capacidadExtra = Math.max(0, capVolumeNueva - capVolumenVieja);
+                                console.log(`💾 Capacidad extra disponible: ${capacidadExtra.toFixed(2)}m³`);
+                                
+                                if (capacidadExtra > 0 && llantasAcumuladasEnBloque?.length > 0) {
+                                    console.log('🎯 Intentando llenar capacidad extra con llantas disponibles...');
+                                    
+                                    let llantasDisponibles = llantasAcumuladasEnBloque.filter(ll => {
+                                        // Obtener cantidad actual en bloqueadas
+                                        let cantEnBloqueadas = 0;
+                                        for (const bloqueada of distribucionBloqueada) {
+                                            if (bloqueada.llantas?.length > 0) {
+                                                const match = bloqueada.llantas.find(bl => 
+                                                    (bl.descripcion || bl.Descripción) === (ll.descripcion || ll.Descripción)
+                                                );
+                                                if (match) cantEnBloqueadas += (match.cantidad || 0);
+                                            }
+                                        }
+                                        // Obtener cantidad actualmente en unidadesValidas[idx]
+                                        let cantEnActual = 0;
+                                        if (unidadesValidas[idx]?.llantas?.length > 0) {
+                                            const match = unidadesValidas[idx].llantas.find(u => 
+                                                (u.descripcion || u.Descripción) === (ll.descripcion || ll.Descripción)
+                                            );
+                                            if (match) cantEnActual += (match.cantidad || 0);
+                                        }
+                                        // Retornar aquellas que tienen disponibles (total > bloqueadas + actuales)
+                                        const totalCant = parseInt(ll.Cantidad || ll.cantidad || ll.CantidadLL || 1);
+                                        return totalCant > (cantEnBloqueadas + cantEnActual);
+                                    });
+                                    
+                                    console.log(`📋 Llantas disponibles para extra capacidad: ${llantasDisponibles.length} tipos`);
+                                    
+                                    let volumenUsado = 0;
+                                    let pesoUsado = 0;
+                                    let llantasAgregadas = 0;
+                                    
+                                    // Agregar lo que quepa
+                                    for (const llanta of llantasDisponibles) {
+                                        if (volumenUsado >= capacidadExtra) break;
+                                        
+                                        const volUnit = parseNumber(llanta.volumenUnitario || llanta.Volumen || llanta['Volumen (m3)'] || 0) || 0;
+                                        const pesoUnit = parseNumber(llanta.pesoUnitario || llanta.Peso || llanta['Peso (kg)'] || 0) || 0;
+                                        const totalCant = parseInt(llanta.Cantidad || llanta.cantidad || 1);
+                                        
+                                        // Calcular cuántas caben
+                                        let cantEnActual = 0;
+                                        if (unidadesValidas[idx]?.llantas?.length > 0) {
+                                            const match = unidadesValidas[idx].llantas.find(u => 
+                                                (u.descripcion || u.Descripción) === (llanta.descripcion || llanta.Descripción)
+                                            );
+                                            if (match) cantEnActual = match.cantidad || 0;
+                                        }
+                                        
+                                        let cantEnBloqueadas = 0;
+                                        for (const bloqueada of distribucionBloqueada) {
+                                            if (bloqueada.llantas?.length > 0) {
+                                                const match = bloqueada.llantas.find(bl => 
+                                                    (bl.descripcion || bl.Descripción) === (llanta.descripcion || llanta.Descripción)
+                                                );
+                                                if (match) cantEnBloqueadas += (match.cantidad || 0);
+                                            }
+                                        }
+                                        
+                                        const cantDisponible = totalCant - cantEnActual - cantEnBloqueadas;
+                                        if (cantDisponible <= 0) continue;
+                                        
+                                        const maxPorVolumen = volUnit > 0 ? Math.floor((capacidadExtra - volumenUsado) / volUnit) : cantDisponible;
+                                        const maxPorPeso = pesoUnit > 0 ? Math.floor((capPesoNueva - unidadesValidas[idx].pesoAsignado - pesoUsado) / pesoUnit) : cantDisponible;
+                                        const cantAgregar = Math.min(cantDisponible, maxPorVolumen, maxPorPeso);
+                                        
+                                        if (cantAgregar > 0) {
+                                            // Buscar si ya está en la lista de esta unidad
+                                            let encontrada = false;
+                                            if (unidadesValidas[idx]?.llantas?.length > 0) {
+                                                for (const ll of unidadesValidas[idx].llantas) {
+                                                    if ((ll.descripcion || ll.Descripción) === (llanta.descripcion || llanta.Descripción)) {
+                                                        ll.cantidad = (ll.cantidad || 0) + cantAgregar;
+                                                        encontrada = true;
+                                                        break;
+                                                    }
+                                                }
+                                            }
+                                            
+                                            if (!encontrada) {
+                                                if (!unidadesValidas[idx].llantas) unidadesValidas[idx].llantas = [];
+                                                unidadesValidas[idx].llantas.push({
+                                                    cantidad: cantAgregar,
+                                                    descripcion: llanta.descripcion || llanta.Descripción || '',
+                                                    linea: llanta.linea || llanta.Linea || ''
+                                                });
+                                            }
+                                            
+                                            volumenUsado += cantAgregar * volUnit;
+                                            pesoUsado += cantAgregar * pesoUnit;
+                                            llantasAgregadas += cantAgregar;
+                                            
+                                            console.log(`  ✅ Agregadas ${cantAgregar}x ${llanta.descripcion || llanta.Descripción}`);
+                                        }
+                                    }
+                                    
+                                    // Actualizar totales de la unidad
+                                    unidadesValidas[idx].volumenAsignado = (unidadesValidas[idx].volumenAsignado || 0) + volumenUsado;
+                                    unidadesValidas[idx].pesoAsignado = (unidadesValidas[idx].pesoAsignado || 0) + pesoUsado;
+                                    unidadesValidas[idx].llantasEstimadas = (unidadesValidas[idx].llantasEstimadas || 0) + llantasAgregadas;
+                                    
+                                    console.log(`📊 Agregadas ${llantasAgregadas} llantas (${volumenUsado.toFixed(2)}m³, ${pesoUsado.toFixed(2)}kg)`);
+                                }
+                                
+                                // === PASO 4: ACTUALIZAR UI ===
                                 const cel = contenedorDetalles.querySelector('.econ-' + idx);
                                 if (cel) cel.textContent = nuevoEco;
                                 if (boton) boton.setAttribute('data-unidades', JSON.stringify(unidadesValidas));
+
+                                // Asegurar que la sección de Distribución Sugerida permanezca desplegada
+                                try {
+                                    const acordeon = document.getElementById('collapseDistribucionMultiple');
+                                    if (acordeon && !acordeon.classList.contains('show')) acordeon.classList.add('show');
+                                } catch (e) { /* ignorar */ }
+                                
+                                // === VALIDACIÓN: ASEGURAR QUE NO HAY LLANTAS PERDIDAS ===
+                                const validacion = validarConteoLlantas(llantasAcumuladasEnBloque || [], unidadesValidas, distribucionBloqueada);
+                                if (!validacion.valido) {
+                                    console.error(`🚨 ALERTA: ${validacion.mensaje} (total: ${validacion.totalOriginal}, en unidades: ${validacion.totalEnUnidades}, bloqueadas: ${validacion.totalEnBloqueadas})`);
+                                } else {
+                                    console.log(`✅ ${validacion.mensaje}`);
+                                }
+                                
+                                console.log('✅ [RESULTADO] unidadesValidas actualizado:', unidadesValidas[idx]);
                             };
+                            
                             sel._handler = handler;
                             sel.addEventListener('change', handler);
                         });

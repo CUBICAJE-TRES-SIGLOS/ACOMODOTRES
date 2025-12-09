@@ -3790,11 +3790,12 @@ async function actualizarUnidadesDisponibles() {
 }
 
 async function agregarBloqueEnModo(continuarAgregando = false) {
-    const folio = document.getElementById('inputBusquedaBloqueNuevo').value.trim().toLowerCase();
+    const folioRaw = document.getElementById('inputBusquedaBloqueNuevo').value.trim();
+    const folio = normalizeKey(folioRaw);
     const divResultado = document.getElementById('resultadoBusquedaBloqueNuevo');
     const bloquesPendientesDiv = document.getElementById('bloquesPendientesNuevoModo');
     
-    if (!folio) {
+    if (!folioRaw) {
         divResultado.innerHTML = `
             <div class="alert alert-warning">
                 <i class="bi bi-exclamation-circle"></i> Por favor, ingrese un folio válido.
@@ -3805,41 +3806,80 @@ async function agregarBloqueEnModo(continuarAgregando = false) {
     try {
         let llantasParaAgregar = [];
         
+        console.log("=== DIAGNÓSTICO DE AGREGACIÓN ===");
+        console.log("Folio ingresado (raw):", folioRaw);
+        console.log("Folio normalizado:", folio);
+        
         // Buscar en todas las fuentes y recolectar las llantas
-        const traspasosRecientes = traspasosParaGuardar.filter(f => 
-            f.Nombre?.toLowerCase() === folio ||
-            f.Folio?.toLowerCase() === folio
-        );
+        const traspasosRecientes = traspasosParaGuardar.filter(f => {
+            const nombre = normalizeKey(f.Nombre || f.nombre || '');
+            const fol = normalizeKey(f.Folio || f.folio || '');
+            return nombre === folio || fol === folio || nombre.includes(folio) || fol.includes(folio);
+        });
         if (traspasosRecientes.length > 0) {
+            console.log("✓ Encontrado en traspasos recientes:", traspasosRecientes);
             llantasParaAgregar = llantasParaAgregar.concat(traspasosRecientes);
         }
 
-        const resEscaneados = await fetch('https://sheetdb.io/api/v1/et3sp6auabhw7?sheet=Facturas');
-        const escaneados = await resEscaneados.json();
-        const escaneadosDelFolio = escaneados.filter(r => 
-            r.Nombre?.toLowerCase() === folio ||
-            r.nombre?.toLowerCase() === folio
-        );
-        if (escaneadosDelFolio.length > 0) {
-            llantasParaAgregar = llantasParaAgregar.concat(escaneadosDelFolio);
+        try {
+            const resEscaneados = await fetch('https://sheetdb.io/api/v1/et3sp6auabhw7?sheet=Facturas');
+            if (resEscaneados.ok) {
+                const escaneados = await resEscaneados.json();
+                const escaneadosDelFolio = escaneados.filter(r => {
+                    const nombre = normalizeKey(r.Nombre || r.nombre || '');
+                    const fol = normalizeKey(r.Folio || r.folio || '');
+                    return nombre === folio || fol === folio || nombre.includes(folio) || fol.includes(folio);
+                });
+                if (escaneadosDelFolio.length > 0) {
+                    console.log("✓ Encontrado en Facturas:", escaneadosDelFolio);
+                    llantasParaAgregar = llantasParaAgregar.concat(escaneadosDelFolio);
+                }
+            }
+        } catch (e) {
+            console.warn('Error buscando en Facturas:', e);
         }
 
-        const bloquesFactura = bloquestraspasos.filter(b => 
-            b.nombre.toLowerCase() === folio
-        );
+        try {
+            const resTrasp = await fetch('https://sheetdb.io/api/v1/et3sp6auabhw7?sheet=traspasos');
+            if (resTrasp.ok) {
+                const traspasos = await resTrasp.json();
+                const traspasosDelFolio = traspasos.filter(r => {
+                    const nombre = normalizeKey(r.Nombre || r.nombre || '');
+                    const fol = normalizeKey(r.Folio || r.folio || '');
+                    return nombre === folio || fol === folio || nombre.includes(folio) || fol.includes(folio);
+                });
+                if (traspasosDelFolio.length > 0) {
+                    console.log("✓ Encontrado en traspasos (sheet):", traspasosDelFolio);
+                    llantasParaAgregar = llantasParaAgregar.concat(traspasosDelFolio);
+                }
+            }
+        } catch (e) {
+            console.warn('Error buscando en traspasos (sheet):', e);
+        }
+
+        const bloquesFactura = bloquestraspasos.filter(b => {
+            const nombreBloque = normalizeKey(b.nombre || '');
+            return nombreBloque === folio || nombreBloque.includes(folio);
+        });
         if (bloquesFactura.length > 0) {
+            console.log("✓ Encontrado en bloques de traspasos:", bloquesFactura);
             llantasParaAgregar = llantasParaAgregar.concat(bloquesFactura[0].datos || []);
         }
 
         if (llantasParaAgregar.length > 0) {
-            // Asegurar que las llantas existan en el INVENTARIO; las que no, se agregarán automáticamente
+            console.log("✓ Total de llantas encontradas para agregar:", llantasParaAgregar.length);
+            
+            // Procesar el bloque encontrado
             try {
-                await asegurarLlantasEnINVENTARIO(llantasParaAgregar);
+                await procesarBloquetraspasos(llantasParaAgregar);
             } catch (e) {
-                console.warn('Error al asegurar llantas en INVENTARIO:', e);
+                console.error('Error al procesar bloque:', e);
+                divResultado.innerHTML = `
+                    <div class="alert alert-danger">
+                        <i class="bi bi-exclamation-triangle"></i> Error al procesar el bloque: ${e.message}
+                    </div>`;
+                return;
             }
-
-            actualizarTablaLlantasBloque(llantasParaAgregar);
             
             if (continuarAgregando) {
                 // Agregar al área de bloques pendientes
@@ -3848,7 +3888,7 @@ async function agregarBloqueEnModo(continuarAgregando = false) {
                 bloquePendiente.innerHTML = `
                     <span>
                         <i class="bi bi-box"></i> 
-                        Bloque "${folio}" agregado (${llantasParaAgregar.length} llantas)
+                        Bloque "${folioRaw}" agregado (${llantasParaAgregar.length} llantas)
                     </span>
                 `;
                 bloquesPendientesDiv.appendChild(bloquePendiente);
@@ -3867,10 +3907,15 @@ async function agregarBloqueEnModo(continuarAgregando = false) {
                 divResultado.innerHTML = `
                     <div class="alert alert-success">
                         <i class="bi bi-check-circle"></i> 
-                        Se agregaron ${llantasParaAgregar.length} llantas al bloque y se finalizó la combinación.
+                        Se agregaron ${llantasParaAgregar.length} llantas al bloque.
                     </div>`;
             }
+            
+            // Actualizar tablas
+            renderPedidosActuales();
+            actualizarGraficas();
         } else {
+            console.log("❌ No se encontraron llantas para el folio:", folio);
             divResultado.innerHTML = `
                 <div class="alert alert-danger">
                     <i class="bi bi-x-circle"></i> No se encontraron llantas para agregar.
@@ -14519,12 +14564,13 @@ function limpiarBusquedaBloqueEnModo() {
     }, 50);
 }
 
-// Función modificada para agregar bloques
+// Función para agregar bloques (VERSIÓN CORREGIDA CON NORMALIZACION)
 async function agregarBloqueEnModo(continuarAgregando = true) {
-    const folio = document.getElementById('inputBusquedaBloqueNuevo').value.trim().toLowerCase();
+    const folioRaw = document.getElementById('inputBusquedaBloqueNuevo').value.trim();
+    const folio = normalizeKey(folioRaw);
     const divResultado = document.getElementById('resultadoBusquedaBloqueNuevo');
       
-    if (!folio) {
+    if (!folioRaw) {
         divResultado.innerHTML = `
             <div class="alert alert-warning">
                 <i class="bi bi-exclamation-circle"></i> Por favor, ingrese un folio válido.
@@ -14534,45 +14580,78 @@ async function agregarBloqueEnModo(continuarAgregando = true) {
 
     try {
         let llantasParaAgregar = [];
-        1
+        
+        console.log("=== AGREGAR BLOQUE - DIAGNÓSTICO ===");
+        console.log("Folio raw:", folioRaw);
+        console.log("Folio normalizado:", folio);
 
-
-        // Buscar en todas las fuentes
-        const traspasosRecientes = traspasosParaGuardar.filter(f => 
-            f.Nombre?.toLowerCase() === folio ||
-            f.Folio?.toLowerCase() === folio
-        );
+        // 1. Buscar en traspasos recientes (en memoria)
+        const traspasosRecientes = traspasosParaGuardar.filter(f => {
+            const nombre = normalizeKey(f.Nombre || f.nombre || '');
+            const fol = normalizeKey(f.Folio || f.folio || '');
+            const match = nombre === folio || fol === folio || nombre.includes(folio) || fol.includes(folio);
+            if (match) console.log("✓ MATCH en traspasos recientes:", f.Nombre || f.nombre, f.Folio || f.folio);
+            return match;
+        });
         if (traspasosRecientes.length > 0) {
+            console.log("→ Encontrado en traspasos recientes:", traspasosRecientes.length, "registros");
             llantasParaAgregar = llantasParaAgregar.concat(traspasosRecientes);
         }
 
-        // Buscar en la hoja de cálculo "Facturas"
-        const resEscaneadosEspeciales = await fetch('https://sheetdb.io/api/v1/et3sp6auabhw7?sheet=Facturas');
-        const escaneadosEspeciales = await resEscaneadosEspeciales.json();
-        const escaneadosEspecialesDelFolio = escaneadosEspeciales.filter(r => 
-            r.Nombre?.toLowerCase() === folio ||
-            r.nombre?.toLowerCase() === folio
-        );
-        if (escaneadosEspecialesDelFolio.length > 0) {
-            llantasParaAgregar = llantasParaAgregar.concat(escaneadosEspecialesDelFolio);
+        // 2. Buscar en Facturas
+        try {
+            const resEscaneadosEspeciales = await fetch('https://sheetdb.io/api/v1/et3sp6auabhw7?sheet=Facturas');
+            if (resEscaneadosEspeciales.ok) {
+                const escaneadosEspeciales = await resEscaneadosEspeciales.json();
+                const escaneadosEspecialesDelFolio = escaneadosEspeciales.filter(r => {
+                    const nombre = normalizeKey(r.Nombre || r.nombre || '');
+                    const fol = normalizeKey(r.Folio || r.folio || '');
+                    return nombre === folio || fol === folio || nombre.includes(folio) || fol.includes(folio);
+                });
+                if (escaneadosEspecialesDelFolio.length > 0) {
+                    console.log("→ Encontrado en Facturas:", escaneadosEspecialesDelFolio.length, "registros");
+                    llantasParaAgregar = llantasParaAgregar.concat(escaneadosEspecialesDelFolio);
+                }
+            }
+        } catch (e) {
+            console.warn("Error en Facturas:", e.message);
         }
 
-        // Usar URL completa para evitar 'Failed to fetch' cuando se ejecuta desde file:// o distinto origen
-        const resEscaneados = await fetch('https://sheetdb.io/api/v1/et3sp6auabhw7?sheet=traspasos');
-        const escaneados = await resEscaneados.json();
-        const escaneadosDelFolio = escaneados.filter(r => 
-            r.Nombre?.toLowerCase() === folio ||
-            r.nombre?.toLowerCase() === folio
-        );
-        if (escaneadosDelFolio.length > 0) {
-            llantasParaAgregar = llantasParaAgregar.concat(escaneadosDelFolio);
+        // 3. Buscar en traspasos (sheet)
+        try {
+            const resEscaneados = await fetch('https://sheetdb.io/api/v1/et3sp6auabhw7?sheet=traspasos');
+            if (resEscaneados.ok) {
+                const escaneados = await resEscaneados.json();
+                const escaneadosDelFolio = escaneados.filter(r => {
+                    const nombre = normalizeKey(r.Nombre || r.nombre || '');
+                    const fol = normalizeKey(r.Folio || r.folio || '');
+                    return nombre === folio || fol === folio || nombre.includes(folio) || fol.includes(folio);
+                });
+                if (escaneadosDelFolio.length > 0) {
+                    console.log("→ Encontrado en traspasos (sheet):", escaneadosDelFolio.length, "registros");
+                    llantasParaAgregar = llantasParaAgregar.concat(escaneadosDelFolio);
+                }
+            }
+        } catch (e) {
+            console.warn("Error en traspasos (sheet):", e.message);
         }
 
-        const bloquesFactura = bloquestraspasos.filter(b => 
-            b.nombre.toLowerCase() === folio
-        );
+        // 4. Buscar en bloques locales
+        const bloquesFactura = bloquestraspasos.filter(b => {
+            const nombreBloque = normalizeKey(b.nombre || '');
+            return nombreBloque === folio || nombreBloque.includes(folio);
+        });
         if (bloquesFactura.length > 0) {
-            llantasParaAgregar = llantasParaAgregar.concat(bloquesFactura[0].datos || []);
+            console.log("→ Encontrado en bloques locales:", bloquesFactura.length, "bloques");
+            for (const bloque of bloquesFactura) {
+                llantasParaAgregar = llantasParaAgregar.concat(bloque.datos || []);
+            }
+        }
+        
+        console.log("=== RESULTADO FINAL DE BÚSQUEDA ===");
+        console.log("Total llantas encontradas:", llantasParaAgregar.length);
+        if (llantasParaAgregar.length > 0) {
+            console.log("Primeras 3 llantas:", llantasParaAgregar.slice(0, 3));
         }
 
         // === FUNCIÓN AUXILIAR: Normalizar código + descripción para comparación robusta ===
@@ -15237,9 +15316,11 @@ async function agregarBloqueEnModo(continuarAgregando = true) {
                 </div>`;
             document.getElementById('inputBusquedaBloqueNuevo').value = '';
         } else {
+            console.log("❌ NO SE ENCONTRARON LLANTAS. Folio normalizado:", folio, "Folio raw:", folioRaw);
             divResultado.innerHTML = `
                 <div class="alert alert-danger">
-                    <i class="bi bi-x-circle"></i> No se encontraron llantas para agregar con el folio "${folio}".
+                    <i class="bi bi-x-circle"></i> No se encontraron llantas para agregar con el folio "${folioRaw}".
+                    <br><small>Buscar en: traspasos, Facturas, traspasos (sheet), bloques locales</small>
                 </div>`;
         }
     } catch (error) {

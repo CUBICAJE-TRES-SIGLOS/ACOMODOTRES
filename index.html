@@ -5547,7 +5547,7 @@ async function calcularVolumenINVENTARIO() {
                 let factorCorreccion, margenLogisticoTipo, volumen_m3;
                 if (tipoLlanta === 'AGRICOLA') {
                     factorCorreccion = desc.includes('L-') ? 1.0 : 1.0;
-                    margenLogisticoTipo = 1.040;
+                    margenLogisticoTipo = 1.900;
                     let alturaFlanco = medidas.perfil * medidas.ancho;
                     let diametroExterno = (medidas.rin + 2 * alturaFlanco) * 1.10;
                     volumen_m3 = Math.PI * Math.pow(diametroExterno/2, 2) * medidas.ancho * factorCorreccion * margenLogisticoTipo;

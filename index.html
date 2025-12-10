@@ -9714,33 +9714,42 @@ async function processFiles() {
                         descripcionCompleta: fileRows.filter(r => r.Descripcion.length > 5).length
                     };
 
-                    logDiv.innerHTML += `
-                        <div class="alert alert-success">
-                            <h6>Archivo: ${file.name}</h6>
-                            <p>✓ ${stats.total} productos extraídos correctamente</p>
-                            <div class="stats-detail">
-                                <small>
-                                    • Productos con cantidad válida: ${stats.cantidadValida}<br>
-                                    • Productos con código válido: ${stats.codigoValido}<br>
-                                    • Productos con descripción completa: ${stats.descripcionCompleta}
-                                </small>
-                            </div>
+                    const alertDiv = document.createElement('div');
+                    alertDiv.className = 'alert alert-success';
+                    alertDiv.innerHTML = `
+                        <h6>Archivo: ${file.name}</h6>
+                        <p>✓ ${stats.total} productos extraídos correctamente</p>
+                        <div class="stats-detail">
+                            <small>
+                                • Productos con cantidad válida: ${stats.cantidadValida}<br>
+                                • Productos con código válido: ${stats.codigoValido}<br>
+                                • Productos con descripción completa: ${stats.descripcionCompleta}
+                            </small>
                         </div>`;
+                    logDiv.appendChild(alertDiv);
+                    
+                    setTimeout(() => { alertDiv.remove(); }, 5000);
                 } else {
-                    logDiv.innerHTML += `
-                        <div class="alert alert-warning">
-                            <h6>Archivo: ${file.name}</h6>
-                            <p>⚠️ No se pudieron extraer productos válidos</p>
-                        </div>`;
+                    const alertDiv = document.createElement('div');
+                    alertDiv.className = 'alert alert-warning';
+                    alertDiv.innerHTML = `
+                        <h6>Archivo: ${file.name}</h6>
+                        <p>⚠️ No se pudieron extraer productos válidos</p>`;
+                    logDiv.appendChild(alertDiv);
+                    
+                    setTimeout(() => { alertDiv.remove(); }, 5000);
                 }
 
             } catch (fileError) {
                 console.error(`Error procesando archivo ${file.name}:`, fileError);
-                logDiv.innerHTML += `
-                    <div class="alert alert-danger">
-                        <h6>Error en archivo: ${file.name}</h6>
-                        <p>${fileError.message}</p>
-                    </div>`;
+                const alertDiv = document.createElement('div');
+                alertDiv.className = 'alert alert-danger';
+                alertDiv.innerHTML = `
+                    <h6>Error en archivo: ${file.name}</h6>
+                    <p>${fileError.message}</p>`;
+                logDiv.appendChild(alertDiv);
+                
+                setTimeout(() => { alertDiv.remove(); }, 5000);
             }
         }
 

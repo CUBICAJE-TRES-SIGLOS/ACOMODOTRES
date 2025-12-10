@@ -318,6 +318,18 @@
             background: none;
             cursor: pointer;
         }
+        
+        #autocompleteUnidadesPedido {
+            background: white;
+            border: 1px solid #ddd;
+            border-top: none;
+            border-radius: 0 0 4px 4px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        
+        #autocompleteUnidadesPedido > div:hover {
+            background: #f0f0f0 !important;
+        }
         /* --- Estilos modernos para traspasos --- */
         .btn-gradient {
             background: linear-gradient(90deg, #2193b0 0%, #6dd5ed 100%);
@@ -678,7 +690,14 @@ document.addEventListener('DOMContentLoaded', function() {
         },
 
         setupEventListeners: function() {
-            // Add any additional event listeners here
+            // Cerrar dropdowns de autocomplete cuando se hace clic afuera
+            document.addEventListener('click', (e) => {
+                const dropdown = document.getElementById('autocompleteUnidadesPedido');
+                const input = document.getElementById('inputPedidoNumEconomico');
+                if (dropdown && input && !input.contains(e.target) && !dropdown.contains(e.target)) {
+                    dropdown.style.display = 'none';
+                }
+            });
         }
     };
 
@@ -945,9 +964,10 @@ document.addEventListener('DOMContentLoaded', function() {
           
     <!-- Pedidos -->    
     <div id="pedidos" class="tabcontent" style="max-width: 1000px;">
-        <div>
+        <div style="position: relative; margin-bottom: 15px;">
             <label for="inputPedidoNumEconomico">Número Económico Camión:</label>
-            <input type="text" id="inputPedidoNumEconomico" oninput="llenarDatosCamionPedido()" placeholder="Ingrese número económico" />
+            <input type="text" id="inputPedidoNumEconomico" oninput="buscarUnidadesPedido()" placeholder="Escriba o seleccione número económico" autocomplete="off" />
+            <div id="autocompleteUnidadesPedido" style="position: absolute; top: 100%; left: 0; right: 0; border: 1px solid #ddd; background: white; max-height: 300px; overflow-y: auto; z-index: 1000; display: none; border-radius: 4px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);"></div>
         </div>                
         <div id="datosCamionPedido" style="margin-top:10px; font-weight:bold; min-height: 50px;"></div>
         <!-- Contenedor para mostrar camiones con pedidos pendientes (multi-cliente) -->
@@ -4132,23 +4152,35 @@ async function agregarBloqueEnModo(continuarAgregando = false) {
 }
 
 function limpiarBusquedaBloqueEnModo() {
-    // Limpiar solo los campos de búsqueda de llanta, sin eliminar la estructura ni otros elementos
-        setTimeout(() => {
-            const inputCodigo = document.getElementById('inputBuscarLlantaCodigo');
-            const inputDescripcion = document.getElementById('inputBuscarLlantaDescripcion');
-            const inputCantidad = document.getElementById('inputBuscarLlantaCantidad');
-            if (inputCodigo) inputCodigo.value = '';
-            if (inputDescripcion) inputDescripcion.value = '';
-            if (inputCantidad) inputCantidad.value = '1';
-            const resultado = document.getElementById('resultadoBusquedaLlanta');
-            if (resultado) resultado.innerHTML = '';
-            // Limpiar autocompletados si están visibles
-            const autoCodigo = document.getElementById('autocompleteCodigoResultados');
-            const autoDesc = document.getElementById('autocompleteDescripcionResultados');
-            if (autoCodigo) { autoCodigo.innerHTML = ''; autoCodigo.style.display = 'none'; }
-            if (autoDesc) { autoDesc.innerHTML = ''; autoDesc.style.display = 'none'; }
-        }, 50);
-    }
+    if (!confirm('¿Estás seguro de que quieres limpiar todos los datos de la búsqueda de bloques?')) return;
+    console.log('🧹 [LIMPIAR BÚSQUEDA BLOQUES] Limpieza completa...');
+    
+    llantasAcumuladasEnBloque = [];
+    distribucionBloqueada = [];
+    if (typeof window.unidadesBloquedadas !== 'undefined') window.unidadesBloquedadas = {};
+    
+    try { Object.keys(localStorage).forEach(k => {
+        if (k.includes('bloque') || k.includes('busqueda') || k.includes('distribucion')) localStorage.removeItem(k);
+    }); } catch (e) { }
+    
+    setTimeout(() => {
+        try { document.getElementById('inputBuscarLlantaCodigo').value = ''; } catch (e) { }
+        try { document.getElementById('inputBuscarLlantaDescripcion').value = ''; } catch (e) { }
+        try { document.getElementById('inputBuscarLlantaCantidad').value = '1'; } catch (e) { }
+        try { document.getElementById('resultadoBusquedaLlanta').innerHTML = ''; } catch (e) { }
+        try { document.getElementById('autocompleteCodigoResultados').innerHTML = ''; document.getElementById('autocompleteCodigoResultados').style.display = 'none'; } catch (e) { }
+        try { document.getElementById('autocompleteDescripcionResultados').innerHTML = ''; document.getElementById('autocompleteDescripcionResultados').style.display = 'none'; } catch (e) { }
+        try { const tbl = document.getElementById('tablaLlantasSeleccionadas'); if (tbl && tbl.querySelector('tbody')) tbl.querySelector('tbody').innerHTML = ''; } catch (e) { }
+        try { const tbl = document.getElementById('tablaUnidadesSugeridasBusqueda'); if (tbl && tbl.querySelector('tbody')) tbl.querySelector('tbody').innerHTML = ''; } catch (e) { }
+        try { document.getElementById('totalLlantas').innerHTML = ''; document.getElementById('totalLlantas').style.display = 'none'; } catch (e) { }
+        try { document.getElementById('resultadosBusqueda').innerHTML = ''; } catch (e) { }
+        try { document.getElementById('contadorTotalLlantasBloque').textContent = '0'; } catch (e) { }
+        try { document.getElementById('bloquesPendientesNuevo').innerHTML = ''; } catch (e) { }
+        try { document.getElementById('collapseDistribucionMultiple').classList.remove('show'); } catch (e) { }
+    }, 50);
+    
+    console.log('✅ [BÚSQUEDA BLOQUES] Limpieza completada');
+}
 
 // --- Búsqueda rápida de llanta en la pestaña de búsqueda de bloque ---
 // Inserta una barra (código/descr + cantidad) y permite agregar la llanta encontrada al bloque
@@ -8379,6 +8411,47 @@ function searchINVENTARIO() {
     }
 
     // ---------- Pedidos (igual que antes) ----------
+    function buscarUnidadesPedido() {
+        const input = document.getElementById('inputPedidoNumEconomico');
+        const dropdown = document.getElementById('autocompleteUnidadesPedido');
+        const term = input.value.trim().toLowerCase();
+        
+        if (!term || !Array.isArray(flota) || flota.length === 0) {
+            dropdown.style.display = 'none';
+            dropdown.innerHTML = '';
+            return;
+        }
+        
+        const matches = flota.filter(unit => {
+            const eco = (unit.economico || unit.numeroEconomico || '').toString().toLowerCase();
+            const unidad = (unit.unidad || '').toString().toLowerCase();
+            return eco.includes(term) || unidad.includes(term);
+        }).slice(0, 10);
+        
+        if (matches.length === 0) {
+            dropdown.style.display = 'none';
+            dropdown.innerHTML = '';
+            return;
+        }
+        
+        dropdown.innerHTML = matches.map(unit => {
+            const eco = unit.economico || unit.numeroEconomico || '-';
+            const nombre = unit.unidad || '-';
+            const modelo = unit.modelo || '-';
+            return `<div onclick="seleccionarUnidadPedido('${eco}')" style="padding: 10px; border-bottom: 1px solid #eee; cursor: pointer; hover: background: #f5f5f5;">
+                <strong>${eco}</strong> - ${nombre} (${modelo})
+            </div>`;
+        }).join('');
+        
+        dropdown.style.display = 'block';
+    }
+    
+    function seleccionarUnidadPedido(economico) {
+        document.getElementById('inputPedidoNumEconomico').value = economico;
+        document.getElementById('autocompleteUnidadesPedido').style.display = 'none';
+        llenarDatosCamionPedido();
+    }
+    
     function llenarDatosCamionPedido() {
         const numEco = document.getElementById('inputPedidoNumEconomico').value.trim();
         const div = document.getElementById('datosCamionPedido');
@@ -8896,26 +8969,59 @@ function resetPedidoInputs() {
 }
 function limpiarPedidosActuales() {
     if (confirm('¿Seguro que deseas limpiar todos los pedidos actuales del camión?')) {
-        pedidosEnCurso = []; // Limpia el array de pedidos
-        renderPedidosActuales(); // Actualiza la tabla
-        actualizarGraficas(); // Actualiza las gráficas
-        resetPedidoInputs(); // Limpia los inputs
+        console.log('🧹 [LIMPIAR PEDIDOS] Iniciando limpieza completa...');
         
-        // Limpiar totales
+        // === LIMPIAR ARRAYS Y ESTRUCTURAS GLOBALES ===
+        pedidosEnCurso = [];
+        if (typeof llantasAgregadas !== 'undefined') llantasAgregadas = [];
+        
+        // === LIMPIAR localStorage ===
+        try {
+            Object.keys(localStorage).forEach(key => {
+                if (key.includes('pedido') || key.includes('llantas') || key.includes('carga')) {
+                    localStorage.removeItem(key);
+                    console.log(`Removido localStorage: ${key}`);
+                }
+            });
+        } catch (e) { console.warn('Error limpiando localStorage:', e); }
+        
+        // === LIMPIAR TABLAS HTML ===
+        const tablaPedidos = document.getElementById('tablaPedidos');
+        if (tablaPedidos) {
+            tablaPedidos.innerHTML = '';
+            console.log('Tabla de pedidos limpiada');
+        }
+        
+        // === LIMPIAR INPUTS ===
+        resetPedidoInputs();
+        const folioPedido = document.getElementById('folioPedido');
+        if (folioPedido) folioPedido.value = '';
+        
+        // === LIMPIAR ELEMENTOS DE DISPLAY ===
         const totalesPedidoElement = document.getElementById('totalesPedido');
         if (totalesPedidoElement) {
             totalesPedidoElement.innerText = 'Total cantidad: 0 | Total volumen: 0 m³ | Total peso: 0 kg | Total valor: $0';
         }
-
-        // Actualizar las gráficas a 0
-        if (chartVolumen && chartCarga) {
+        
+        // === RESETEAR GRÁFICAS ===
+        if (typeof chartVolumen !== 'undefined' && chartVolumen) {
             chartVolumen.data.datasets[0].data = [0, 100];
-            chartCarga.data.datasets[0].data = [0, 100];
             chartVolumen.update();
-            chartCarga.update();
-            document.querySelector('#graphVolumen + p').innerHTML = 'Espacio usado';
-            document.querySelector('#graphCarga + p').innerHTML = 'Carga Usada';
+            const graphVolLabel = document.querySelector('#graphVolumen + p');
+            if (graphVolLabel) graphVolLabel.innerHTML = 'Espacio usado';
         }
+        if (typeof chartCarga !== 'undefined' && chartCarga) {
+            chartCarga.data.datasets[0].data = [0, 100];
+            chartCarga.update();
+            const graphCargaLabel = document.querySelector('#graphCarga + p');
+            if (graphCargaLabel) graphCargaLabel.innerHTML = 'Carga Usada';
+        }
+        
+        // === FORZAR ACTUALIZACIÓN DE TABLAS ===
+        try { renderPedidosActuales(); } catch (e) { console.warn('renderPedidosActuales falló:', e); }
+        try { actualizarGraficas(); } catch (e) { console.warn('actualizarGraficas falló:', e); }
+        
+        console.log('✅ [LIMPIAR PEDIDOS] Limpieza completada sin residuales');
     }
 }
 // Agregar después de las funciones existentes
@@ -14235,47 +14341,31 @@ function calcularUnidadSugerida(volumenTotal, pesoTotal) {
 }
 
 function limpiarCalculadora() {
-    // Confirmar con el usuario
     if (!confirm('¿Estás seguro de que quieres limpiar todos los datos de la calculadora?')) {
         return;
     }
-
-    // Limpiar las llantas agregadas globalmente
+    console.log('🧹 [LIMPIAR CALCULADORA] Limpieza completa...');
+    
     llantasAgregadas = [];
+    if (typeof window.llantasCalculadoraTmp !== 'undefined') window.llantasCalculadoraTmp = [];
     
-    // Limpiar tabla de llantas agregadas
-    const tablaLlantas = document.getElementById('tablaLlantasAgregadas').querySelector('tbody');
-    tablaLlantas.innerHTML = '';
+    try { Object.keys(localStorage).forEach(k => {
+        if (k.includes('calc') || k.includes('llanta') || k.includes('suger')) localStorage.removeItem(k);
+    }); } catch (e) { }
     
-    // Resetear valores de entrada
-    document.getElementById('sugestionCantidad').value = '1';
-    document.getElementById('sugestionTipoLlanta').selectedIndex = 0;
+    try {
+        const tablaLlantas = document.getElementById('tablaLlantasAgregadas').querySelector('tbody');
+        if (tablaLlantas) tablaLlantas.innerHTML = '';
+    } catch (e) { }
     
-    // Limpiar totales
-    const totalLlantasDiv = document.getElementById('totalLlantas');
-    if (totalLlantasDiv) {
-        totalLlantasDiv.innerHTML = '';
-    }
+    try { document.getElementById('sugestionCantidad').value = '1'; } catch (e) { }
+    try { document.getElementById('sugestionTipoLlanta').selectedIndex = 0; } catch (e) { }
+    try { document.getElementById('totalLlantas').innerHTML = ''; } catch (e) { }
+    try { document.getElementById('resultadoSugerencia').classList.add('d-none'); } catch (e) { }
+    try { document.getElementById('unidadSugeridaDetalles').innerHTML = ''; } catch (e) { }
+    try { document.getElementById('seccionUnidadSugeridaCalculadora').style.display = 'none'; } catch (e) { }
     
-    // Ocultar y limpiar resultados de sugerencia
-    const resultadoSugerencia = document.getElementById('resultadoSugerencia');
-    if (resultadoSugerencia) {
-        resultadoSugerencia.classList.add('d-none');
-    }
-    
-    const unidadSugeridaDetalles = document.getElementById('unidadSugeridaDetalles');
-    if (unidadSugeridaDetalles) {
-        unidadSugeridaDetalles.innerHTML = '';
-    }
-    
-    // Ocultar y limpiar sección de unidad sugerida
-    const seccionUnidadSugerida = document.getElementById('seccionUnidadSugeridaCalculadora');
-    if (seccionUnidadSugerida) {
-        seccionUnidadSugerida.style.display = 'none';
-    }
-    
-    // Limpiar totales
-    document.getElementById('totalLlantas').innerHTML = '';
+    console.log('✅ [CALCULADORA] Limpieza completada');
 }
 
 function limpiarBusquedaBloques() {

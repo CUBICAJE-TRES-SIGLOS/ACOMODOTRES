@@ -2759,6 +2759,34 @@ function safeNum(v) {
         }
     }
 
+    // Nueva regla: Valida que la descripción solo contenga caracteres permitidos
+    // Caracteres permitidos: letras, números, espacios, paréntesis (), puntos, barras /, guiones - y guiones bajos _
+    // Rechaza: !"·& y otros caracteres especiales no permitidos
+    function validarCaracteresFacturaDesc(s) {
+        if (!s && s !== 0) return { valido: true, mensaje: '' };
+        try {
+            let str = String(s).trim();
+            if (!str) return { valido: true, mensaje: '' };
+            
+            // Expresión regular que solo permite: letras (a-z, A-Z), números (0-9), espacios, paréntesis, puntos, barras, guiones y guiones bajos
+            const regexPermitida = /^[a-zA-Z0-9\s\(\)\.\-_/]*$/;
+            
+            if (!regexPermitida.test(str)) {
+                // Encontrar caracteres no permitidos
+                const caracteresNoPermitidos = str.match(/[^a-zA-Z0-9\s\(\)\.\-_/]/g);
+                const caracteresUnicos = [...new Set(caracteresNoPermitidos)].join('');
+                return { 
+                    valido: false, 
+                    mensaje: `Caracteres no permitidos en descripción: ${caracteresUnicos}. Solo se permiten: letras, números, espacios, paréntesis (), puntos, barras /, guiones - y guiones bajos _` 
+                };
+            }
+            
+            return { valido: true, mensaje: '' };
+        } catch (e) {
+            return { valido: false, mensaje: 'Error al validar descripción' };
+        }
+    }
+
 // ========== AUTOCOMPLETADO GENÉRICO PARA BLOQUES ==========
 async function autocompletarBuscaBloques(inputId, dropdownId) {
     const inputElement = document.getElementById(inputId);
@@ -9694,10 +9722,18 @@ async function processFiles() {
 
                             if (!codigo || !descripcion) return null;
 
+                            // NUEVA REGLA: Validar que la descripción solo contenga caracteres permitidos
+                            const validacionCaracteres = validarCaracteresFacturaDesc(descripcion);
+                            if (!validacionCaracteres.valido) {
+                                console.warn('Descripción rechazada por caracteres no permitidos:', descripcion, validacionCaracteres.mensaje);
+                                return null;
+                            }
+
                             const validaciones = {
                                 codigo: /^[A-Z0-9\-\.\/()]{2,}$/i.test(codigo),
                                 cantidad: !isNaN(cantidad) && cantidad > 0,
-                                descripcion: descripcion.length >= 5
+                                descripcion: descripcion.length >= 5,
+                                caracteres: validacionCaracteres.valido
                             };
 
                             if (Object.values(validaciones).every(v => v)) {
@@ -9967,6 +10003,21 @@ async function calcularVolumenLlanta(descripcion) {
 
     // Patrones para diferentes tipos de llantas
     const patrones = [
+        // 0. Formatos agrícolas especiales tipo 30.5LR32, 30.5 L R 32, 30.5L-R32 etc.
+        {
+            // buscar el patrón en cualquier parte de la descripción, permitir espacios entre L y R
+            regex: /(\d+(?:\.\d+)?)[\s]*L?\s*R[\s-]*(\d{2,3})/i,
+            calc: (m, desc = '') => {
+                const ancho = Number(m[1]) * 25.4 / 1000; // pulgadas a metros
+                const rin = Number(m[2]) * 0.0254; // pulgada a metro
+                // Base de cálculo similar a agrícolas: volumen aproximado por cilindro anular
+                let factor = 1.45; // factor base agrícola
+                const d = (desc || '').toUpperCase();
+                if (d.includes('AGRO') || d.includes('AGRIC') || d.includes('FARM')) factor *= 1.02;
+                if (d.includes('FORERUNNER') || d.includes('QH741')) factor *= 1.0; // mantener neutro si marca conocida
+                return Math.PI * Math.pow((rin + ancho) / 2, 2) * ancho * factor;
+            }
+        },
         // 1. Llantas de auto/camioneta (ej: 195/65 R15, 205/55 R16)
         {
             regex: /^(\d{3})[\s\/](\d{2})[\s\/]?R(\d{2})/i,
@@ -16071,7 +16122,7 @@ async function generarPDFPedidosApartados() {
             timer: 2000,
             showConfirmButton: false
         });
-    } catch (error) {
+    } catch (error) {  
         // Mostrar mensaje de error
         Swal.fire({
             icon: 'error',

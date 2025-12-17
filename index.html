@@ -11470,9 +11470,9 @@ async function aceptarPedido() {
         // Si hay un camión activo para agregar automáticamente, guardamos directamente en su lista
         if (activePendingEconomico) {
             const nombreResultAuto = await Swal.fire({
-                title: 'Nombre del responsable',
+                title: 'Nombre del cliente',
                 input: 'text',
-                inputLabel: `Agregar al camión ${activePendingEconomico}`,
+                inputLabel: `Agregar a la unidad ${activePendingEconomico}`,
                 inputPlaceholder: 'Nombre completo',
                 showCancelButton: true,
                 confirmButtonText: 'Guardar',

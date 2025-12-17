@@ -10325,8 +10325,7 @@ async function cargarEscaneosGuardados(filtro = '', silencioso = false) {
                                     <li class="list-group-item">
                                         <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
                                             <div><strong>Código:</strong> ${codigo}</div>
-                                            <div><strong>Archivo:</strong> ${archivo}</div>
-                                            <div><strong>Fecha:</strong> ${fecha}</div>
+                                            <div><strong>cantidad:</strong> ${item.Cantidad || item.cantidad || ''}</div>
                                         </div>
                                         <div style="margin-top:6px;"><strong>Descripción:</strong> ${descSan || ''}</div>
                                     </li>

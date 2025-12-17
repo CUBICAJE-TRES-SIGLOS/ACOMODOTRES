@@ -12508,23 +12508,33 @@ function normalizeFacturaContainers() {
 
 // Event listener para el botón de limpiar caché
 document.getElementById('traspasosEspecialesCacheClearBtn').onclick = () => {
-    if (confirm('¿Estás seguro de que deseas eliminar todos los datos en caché de traspasos especiales?')) {
-        const cacheKeys = Object.keys(localStorage).filter(key => 
-            key.startsWith('factura_especial_')
-        );
-        
-        if (cacheKeys.length > 0) {
-            cacheKeys.forEach(key => localStorage.removeItem(key));
-            alert('Caché de traspasos especiales limpiado exitosamente');
-            
-            // Limpiar también la interfaz
-            document.getElementById('extractedData').innerHTML = '';
-            document.getElementById('log').style.display = 'none';
-            document.getElementById('fileInput').value = '';
-        } else {
-            alert('No hay datos en caché para limpiar');
-        }
-    }
+    if (!confirm('¿Estás seguro de que deseas eliminar todos los datos en caché y el estado local de la pestaña de Facturas?')) return;
+
+    // Remover claves de localStorage relevantes para facturas/escaneos
+    try {
+        const keys = Object.keys(localStorage);
+        const toRemove = keys.filter(k => k.startsWith('factura_especial_') || k.startsWith('pdf_') || k.startsWith('cache_'));
+        toRemove.forEach(k => { localStorage.removeItem(k); console.log('Removed localStorage key:', k); });
+    } catch (e) { console.warn('Error al limpiar localStorage en traspasosEspeciales:', e); }
+
+    // Limpiar estado en memoria relacionado
+    try { archivosEscaneados = []; } catch (e) { console.warn(e); }
+    try { bloquesfacturas = []; } catch (e) { console.warn(e); }
+    try { traspasosParaGuardar = []; } catch (e) { console.warn(e); }
+
+    // Limpiar interfaz de la pestaña
+    try { const ex = document.getElementById('extractedData'); if (ex) ex.innerHTML = ''; } catch(e){}
+    try { const lg = document.getElementById('log'); if (lg) { lg.style.display = 'none'; lg.innerHTML = ''; } } catch(e){}
+    try { const fi = document.getElementById('fileInput'); if (fi) fi.value = ''; } catch(e){}
+    try { const esc = document.getElementById('escaneosGuardados'); if (esc) esc.innerHTML = ''; } catch(e){}
+    try { const fg = document.getElementById('facturaGroupsContainer_facturas'); if (fg) fg.innerHTML = ''; } catch(e){}
+
+    // Re-renderizar vistas si existen funciones
+    try { if (typeof mostrarArchivosEscaneados === 'function') mostrarArchivosEscaneados(); } catch(e){console.warn(e);}
+    try { if (typeof mostrarBloquesfacturas === 'function') mostrarBloquesfacturas(); } catch(e){console.warn(e);}
+    try { if (typeof actualizarBloquesfacturas === 'function') actualizarBloquesfacturas(); } catch(e){console.warn(e);}
+
+    alert('Caché y estado de la pestaña Facturas limpiados correctamente');
 };
 
 // Agregar con los otros event listeners

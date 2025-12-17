@@ -1343,123 +1343,48 @@ document.addEventListener('DOMContentLoaded', function() {
                 
                 // === VALIDACIÓN: ASEGURAR QUE LAS LLANTAS NO DESAPARECEN ===
                 function validarConteoLlantas(llantasOriginales, unidadesActuales, distribucionBloqueadaParam) {
-                    // Evitar doble conteo: preferir llantasEstimadas cuando exista, si no usar suma de unidad.llantas[]
                     let totalOriginal = 0;
-                    const detalle = [];
-
-                    // Contar llantas originales
-                    for (const ll of (llantasOriginales || [])) {
-                        const cant = parseInt(ll.Cantidad || ll.cantidad || ll.CantidadLL || ll.CANTIDAD || 0, 10) || 0;
-                        totalOriginal += cant;
-                    }
-
-                    // Mapear unidades por económico para evitar duplicados
-                    const mapaUnidades = new Map();
-
-                    // Procesar unidades actuales (distribucion final)
-                    for (const unidad of (unidadesActuales || [])) {
-                        const eco = String(unidad.economico || unidad.economico || unidad.codigo || unitKey(unidad) || '').trim();
-
-                        const estimadas = (typeof unidad.llantasEstimadas !== 'undefined') ? Number(unidad.llantasEstimadas || 0) : null;
-                        let fromArray = 0;
-                        if (unidad.llantas && Array.isArray(unidad.llantas)) {
-                            fromArray = unidad.llantas.reduce((s, x) => s + (Number(x.cantidad || x.Cantidad || 0) || 0), 0);
-                        }
-
-                        const used = (estimadas !== null) ? estimadas : fromArray;
-
-                        mapaUnidades.set(eco || (`UNIDAD-${mapaUnidades.size+1}`), {
-                            economico: eco,
-                            used: used,
-                            estimadas: estimadas,
-                            fromArray: fromArray,
-                            source: 'distribucion'
-                        });
-                    }
-
-                    // Procesar bloques manuales (solo para información, no para sumar doble)
-                    const mapaBloqueados = new Map();
-                    for (const b of (distribucionBloqueadaParam || [])) {
-                        const eco = String(b.economico || b.codigo || '').trim() || (`BLOQ-${mapaBloqueados.size+1}`);
-                        const estimadas = (typeof b.llantasEstimadas !== 'undefined') ? Number(b.llantasEstimadas || 0) : null;
-                        let fromArray = 0;
-                        if (b.llantas && Array.isArray(b.llantas)) {
-                            fromArray = b.llantas.reduce((s, x) => s + (Number(x.cantidad || x.Cantidad || 0) || 0), 0);
-                        }
-                        const used = (estimadas !== null) ? estimadas : fromArray;
-                        mapaBloqueados.set(eco, { economico: eco, used: used, estimadas: estimadas, fromArray: fromArray, source: 'bloqueado' });
-                    }
-
-                    // Sumar total en unidades (usar mapaUnidades 'used')
                     let totalEnUnidades = 0;
-                    for (const [k, v] of mapaUnidades) {
-                        totalEnUnidades += Number(v.used || 0);
-                        detalle.push({ tipo: 'unidad', economico: v.economico, used: v.used, estimadas: v.estimadas, fromArray: v.fromArray });
-                    }
-
-                    // Total en bloqueados (solo info)
                     let totalEnBloqueadas = 0;
-                    for (const [k, v] of mapaBloqueados) {
-                        totalEnBloqueadas += Number(v.used || 0);
-                        detalle.push({ tipo: 'bloqueado', economico: v.economico, used: v.used, estimadas: v.estimadas, fromArray: v.fromArray });
+                    
+                    // Contar llantas originales
+                    for (const ll of llantasOriginales) {
+                        totalOriginal += parseInt(ll.Cantidad || ll.cantidad || ll.CantidadLL || 1);
                     }
-
-                    // Preparar resultado
-                    const totalActual = totalEnUnidades; // lo que realmente se mostrará en la distribución final
+                    
+                    // Contar llantas en unidades actuales
+                    for (const unidad of unidadesActuales) {
+                        if (unidad.llantas?.length > 0) {
+                            for (const ll of unidad.llantas) {
+                                totalEnUnidades += parseInt(ll.cantidad || 1);
+                            }
+                        }
+                    }
+                    
+                    // Contar llantas en distribucionBloqueada
+                    for (const bloqueada of (distribucionBloqueadaParam || [])) {
+                        if (bloqueada.llantas?.length > 0) {
+                            for (const ll of bloqueada.llantas) {
+                                totalEnBloqueadas += parseInt(ll.cantidad || 1);
+                            }
+                        }
+                    }
+                    
+                    const totalActual = totalEnUnidades + totalEnBloqueadas;
                     const diferencia = totalOriginal - totalActual;
-
+                    
                     const resultado = {
                         totalOriginal: totalOriginal,
                         totalEnUnidades: totalEnUnidades,
                         totalEnBloqueadas: totalEnBloqueadas,
                         totalActual: totalActual,
                         diferencia: diferencia,
-                        valido: diferencia === 0,
-                        mensaje: diferencia === 0 ? '✅ Conteo correcto' : (diferencia > 0 ? `⚠️ FALTAN ${diferencia} LLANTAS` : `⚠️ SOBRAN ${Math.abs(diferencia)} LLANTAS`),
-                        detalle: detalle
+                        valido: Math.abs(diferencia) <= 1, // permitir pequeño margen de error
+                        mensaje: diferencia === 0 ? '✅ Conteo correcto' : `⚠️ FALTA ${Math.abs(diferencia)} LLANTAS`
                     };
-
-                    console.log('📊 [VALIDACIÓN] Conteo de llantas (detallado):', resultado);
-
-                    // Construir diagnóstico HTML si hay discrepancia
-                    if (!resultado.valido) {
-                        try {
-                            const rows = resultado.detalle.map(d => `
-                                <tr>
-                                    <td>${d.tipo}</td>
-                                    <td>${d.economico || 'N/A'}</td>
-                                    <td style="text-align:right">${Number(d.estimadas || '') || '-'}</td>
-                                    <td style="text-align:right">${Number(d.fromArray || '') || '-'}</td>
-                                    <td style="text-align:right">${Number(d.used || 0)}</td>
-                                </tr>
-                            `).join('');
-
-                            const html = `
-                                <div style="text-align:left">
-                                    <p><strong>Conteo original:</strong> ${resultado.totalOriginal}</p>
-                                    <p><strong>Asignadas en distribución:</strong> ${resultado.totalEnUnidades}</p>
-                                    <p><strong>En bloqueos manuales (info):</strong> ${resultado.totalEnBloqueadas}</p>
-                                    <p><strong>Diferencia:</strong> ${resultado.diferencia}</p>
-                                    <hr />
-                                    <table style="width:100%;font-size:0.9em;border-collapse:collapse">
-                                        <thead><tr><th>Tipo</th><th>Unidad</th><th>Estimadas</th><th>Desde array</th><th>Usadas</th></tr></thead>
-                                        <tbody>
-                                            ${rows}
-                                        </tbody>
-                                    </table>
-                                    <p style="margin-top:8px">Revisa las filas donde "Estimadas" y "Desde array" aparecen juntas (puede causar doble conteo). Si aparece una unidad dos veces, indica que está en bloqueados y en la distribución.</p>
-                                </div>
-                            `;
-
-                            try { Swal.fire({ icon: 'info', title: 'Comprobación de conteo', html: html, width: '680px', showConfirmButton: true }); } catch(e) { console.info('Swal no disponible:', e); }
-                        } catch (e) {
-                            console.warn('Error construyendo modal diagnóstico:', e);
-                        }
-                    }
-
+                    
+                    console.log('📊 [VALIDACIÓN] Conteo de llantas:', resultado);
                     return resultado;
-
-                    function unitKey(u){ return (u && (u.economico || u.codigo || u.unidad)) || ''; }
                 }
                 
                 // Funciones específicas para la distribución múltiple
@@ -1978,14 +1903,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     }
 
                     // Calcular capacidades totales de las unidades listadas en 'distribucion'
-                    // Cambio: usar la flota completa como base (pero preservar el orden de las unidades
-                    // que ya estaban en `distribucion`). Esto evita que al cambiar una unidad se pierdan
-                    // las demás unidades de la lista y, por ende, que desaparezcan llantas.
-                    const codigosEnDistribucion = new Set((distribucion || []).map(d => String(d.economico)));
-                    const porDistribucion = (distribucion || []).map(item => unidadesFlota.find(u => String(u.codigo) === String(item.economico))).filter(Boolean);
-                    const otros = (unidadesFlota || []).filter(u => !codigosEnDistribucion.has(String(u.codigo)));
-                    let unidadesProcesar = [...porDistribucion, ...otros];
-
+                    let unidadesProcesar = distribucion.map(item => unidadesFlota.find(u => String(u.codigo) === String(item.economico))).filter(Boolean);
                     let totalCapVol = unidadesProcesar.reduce((s, u) => s + (parseNumber(u.capacidadVolumen) || 0), 0);
                     let totalCapPeso = unidadesProcesar.reduce((s, u) => s + (parseNumber(u.capacidadPeso) || 0), 0);
 
@@ -2111,114 +2029,12 @@ document.addEventListener('DOMContentLoaded', function() {
                     console.log('🔄 Distribución recalculada:', distribucionNueva);
                     
                     // === RETORNAR: PRIMERO BLOQUEADOS (FIJOS), LUEGO REDISTRIBUIDOS (SIN DUPLICADOS) ===
-                    // Validación adicional: comprobar que el total de llantas coincide con el bloque original.
-                    try {
-                        const distribucionFinalPreview = [...distribucionBloqueada, ...distribucionNueva];
-                        const validacion = validarConteoLlantas(llantasOriginales || [], distribucionFinalPreview || [], distribucionBloqueada || []);
-                        if (!validacion.valido) {
-                            console.warn('[VALIDACIÓN] Discrepancia detectada en llantas:', validacion);
-
-                            // Mostrar detalle al usuario para facilitar debugging
-                            try {
-                                const html = `
-                                    <div style="text-align:left">
-                                        <p><strong>Conteo original:</strong> ${validacion.totalOriginal}</p>
-                                        <p><strong>Asignadas en distribución:</strong> ${validacion.totalEnUnidades}</p>
-                                        <p><strong>En bloqueos manuales:</strong> ${validacion.totalEnBloqueadas}</p>
-                                        <p><strong>Diferencia:</strong> ${validacion.diferencia}</p>
-                                        <p>Comprueba las líneas en la tabla de llantas del bloque o revisa formatos de cantidad (coma vs punto, valores nulos).</p>
-                                    </div>
-                                `;
-                                try { Swal.fire({ icon: 'info', title: 'Comprobación de conteo', html: html, showConfirmButton: true }); } catch(e) { console.info('Swal no disponible:', e); }
-                            } catch (e) { console.warn('No se pudo mostrar detalle de validación:', e); }
-                        }
-                    } catch (e) { console.warn('Error ejecutando validación de conteo:', e); }
                     // Evitar duplicados: si una unidad ya está en bloqueados, no agregarla de nuevo desde distribucionNueva
                     const economicosBloqueados = new Set(distribucionBloqueada.map(d => String(d.economico)));
                     const distribucionNuevaSinDuplicados = distribucionNueva.filter(d => !economicosBloqueados.has(String(d.economico)));
                     
                     const distribucionFinal = [...distribucionBloqueada, ...distribucionNuevaSinDuplicados];
                     console.log(`[BLOQUEO] Distribución final: ${distribucionBloqueada.length} bloqueadas + ${distribucionNuevaSinDuplicados.length} redistribuidas (sin duplicados) = ${distribucionFinal.length} total`);
-
-                    // Asegurar que no 'desaparezcan' llantas: si la suma asignada es menor que las llantas totales,
-                    // crear una fila explícita 'Sobrantes' para que siempre se visualicen las faltantes.
-                    try {
-                        const sumaAsignada = distribucionFinal.reduce((s, x) => s + (parseInt(x.llantasEstimadas || (Array.isArray(x.llantas) ? x.llantas.reduce((ss,yy)=> ss + (parseInt(yy.cantidad||yy.Cantidad||0)||0),0) : 0)) || 0), 0);
-                        const faltantes = (llantasTotal || 0) - sumaAsignada;
-                        if (faltantes > 0) {
-                            // Intentar construir la fila de sobrantes usando las llantas que quedaron en llantasDisponibles
-                            let sobrantesDetalle = (Array.isArray(llantasDisponibles) ? llantasDisponibles.filter(l => (l.cantidadPendiente || 0) > 0) : []);
-
-                            // Si no encontramos detalle, caemos en fallback genérico
-                            if (!sobrantesDetalle || sobrantesDetalle.length === 0) {
-                                // Fallback: crear entrada genérica
-                                distribucionFinal.push({
-                                    unidad: 'Sobrantes',
-                                    economico: 'SIN-UNIDAD',
-                                    llantasEstimadas: faltantes,
-                                    volumen: 0,
-                                    peso: 0,
-                                    eficiencia: 0,
-                                    descripciones: `${faltantes} llantas sin asignar (fila automática)`,
-                                    llantas: [{ cantidad: faltantes, descripcion: 'Sin asignar' }]
-                                });
-
-                                console.warn(`⚠️ Se han detectado ${faltantes} llantas faltantes (sin detalle): se ha añadido una fila 'Sobrantes' para visibilidad.`);
-                                try { Swal.fire({ icon: 'info', title: 'Sobrantes detectados', html: `Quedan <strong>${faltantes}</strong> llantas sin asignar. Se han agregado a una fila 'Sobrantes' para que pueda reasignarlas manualmente.`, timer: 6000, toast: true, position: 'top-end', showConfirmButton: false }); } catch(e){}
-
-                            } else {
-                                const descs = sobrantesDetalle.map(x => `${x.cantidadPendiente || 0}x ${x.Descripción || x.descripcion || ''}`).join('\n');
-                                const volEstim = sobrantesDetalle.reduce((s,x) => s + ((parseNumber(x.volumenUnitario || x.Volumen || 0) || 0) * (parseInt(x.cantidadPendiente || 0) || 0)), 0);
-                                const pesoEstim = sobrantesDetalle.reduce((s,x) => s + ((parseNumber(x.pesoUnitario || x.Peso || 0) || 0) * (parseInt(x.cantidadPendiente || 0) || 0)), 0);
-
-                                distribucionFinal.push({
-                                    unidad: 'Sobrantes',
-                                    economico: 'SIN-UNIDAD',
-                                    llantasEstimadas: faltantes,
-                                    volumen: volEstim,
-                                    peso: pesoEstim,
-                                    eficiencia: 0,
-                                    descripciones: descs || `${faltantes} llantas sin asignar (fila automática)`,
-                                    llantas: sobrantesDetalle.map(s => ({ cantidad: s.cantidadPendiente || 0, descripcion: s.Descripción || s.descripcion || '' }))
-                                });
-
-                                console.warn(`⚠️ Se han detectado ${faltantes} llantas faltantes (detalle disponible): se ha añadido una fila 'Sobrantes' con descripciones.`);
-                                try { Swal.fire({ icon: 'info', title: 'Sobrantes detectados', html: `Quedan <strong>${faltantes}</strong> llantas sin asignar. Se han agregado a una fila 'Sobrantes' (con descripciones) para que pueda reasignarlas manualmente.`, timer: 6000, toast: true, position: 'top-end', showConfirmButton: false }); } catch(e){}
-                            }
-                        }
-                    } catch (e) { console.warn('Error al forzar fila de sobrantes:', e); }
-
-                    // Detectar llantas sobrantes (si llantasDisponibles quedó con cantidadPendiente)
-                    try {
-                        const sobrantes = (Array.isArray(llantasDisponibles) ? llantasDisponibles.filter(l => (l.cantidadPendiente || 0) > 0) : []);
-                        const sobrantesCount = sobrantes.reduce((s, x) => s + (parseInt(x.cantidadPendiente || 0) || 0), 0);
-                        if (sobrantesCount > 0) {
-                            // Evitar duplicar la fila 'Sobrantes' si ya fue creada por la verificación anterior
-                            if (!distribucionFinal.some(d => String(d.economico) === 'SIN-UNIDAD')) {
-                                const sobrantesVol = sobrantes.reduce((s, x) => s + ((parseNumber(x.volumenUnitario || x.Volumen || 0) || 0) * (parseInt(x.cantidadPendiente || 0) || 0)), 0);
-                                const sobrantesPeso = sobrantes.reduce((s, x) => s + ((parseNumber(x.pesoUnitario || x.Peso || 0) || 0) * (parseInt(x.cantidadPendiente || 0) || 0)), 0);
-                                const descs = sobrantes.map(x => `${x.cantidadPendiente || 0}x ${x.Descripción || x.descripcion || ''}`).join('\n');
-
-                                // Añadir una fila 'Sobrantes' para visibilidad y evitar pérdida de datos
-                                distribucionFinal.push({
-                                    unidad: 'Sobrantes',
-                                    economico: 'SIN-UNIDAD',
-                                    llantasEstimadas: sobrantesCount,
-                                    volumen: sobrantesVol,
-                                    peso: sobrantesPeso,
-                                    eficiencia: 0,
-                                    descripciones: descs || 'Sin descripciones',
-                                    llantas: sobrantes.map(s => ({ cantidad: s.cantidadPendiente || 0, descripcion: s.Descripción || s.descripcion || '' }))
-                                });
-
-                                console.warn(`⚠️ Quedan ${sobrantesCount} llantas sin asignar — añadidas a 'Sobrantes' para visibilidad.`);
-                                try { Swal.fire({ icon: 'info', title: 'Sobrantes detectados', html: `Quedan <strong>${sobrantesCount}</strong> llantas sin asignar. Se han agregado a una fila 'Sobrantes' para que pueda reasignarlas manualmente.`, timer: 6000, toast: true, position: 'top-end', showConfirmButton: false }); } catch(e){}
-                            } else {
-                                console.log('La fila Sobrantes ya existe; no se añade de nuevo.');
-                            }
-                        }
-                    } catch (e) { console.warn('No se pudo evaluar sobrantes:', e); }
-
                     return distribucionFinal;
                 }
 
@@ -2260,108 +2076,19 @@ document.addEventListener('DOMContentLoaded', function() {
                         console.warn('Error actualizando totales de distribución', e);
                     }
                 }
-
-                // Mueve sobrantes a la unidad seleccionada intentando llenar su capacidad
-                function asignarSobrantesAUnidad(economicoDestino, distribucionRef, unidadesFlotaRef) {
-                    try {
-                        if (!Array.isArray(distribucionRef) || !Array.isArray(unidadesFlotaRef)) return 0;
-
-                        const idxS = distribucionRef.findIndex(d => String(d.economico || '').trim() === 'SIN-UNIDAD' || /Sobrantes/i.test(String(d.unidad || '')));
-                        if (idxS < 0) return 0;
-
-                        const sobrante = distribucionRef[idxS];
-                        let sobrantesCount = parseInt(sobrante.llantasEstimadas || (Array.isArray(sobrante.llantas) ? sobrante.llantas.reduce((s,x)=> s + (parseInt(x.cantidad||0)||0), 0) : 0)) || 0;
-                        if (sobrantesCount <= 0) return 0;
-
-                        const unidadObj = unidadesFlotaRef.find(u => String(u.codigo) === String(economicoDestino));
-                        if (!unidadObj) return 0;
-
-                        // Estimar volumen/peso por pieza del sobrante
-                        const avgVol = (Number(sobrante.volumen) || 0) / (sobrantesCount || 1);
-                        const avgPeso = (Number(sobrante.peso) || 0) / (sobrantesCount || 1);
-
-                        // Buscar destino en la distribución
-                        let destino = distribucionRef.find(d => String(d.economico) === String(economicoDestino));
-                        if (!destino) {
-                            destino = {
-                                unidad: unidadObj.nombre || unidadObj.unidad || '',
-                                economico: String(economicoDestino),
-                                llantasEstimadas: 0,
-                                volumen: 0,
-                                peso: 0,
-                                eficiencia: 0,
-                                descripciones: '',
-                                llantas: []
-                            };
-                            distribucionRef.push(destino);
-                        }
-
-                        const capVol = parseNumber(unidadObj.capacidadVolumen) || 0;
-                        const capPeso = parseNumber(unidadObj.capacidadPeso) || 0;
-
-                        const usedVol = Number(destino.volumen || 0);
-                        const usedPeso = Number(destino.peso || 0);
-
-                        let canByVol = capVol > 0 ? Math.floor(Math.max(0, (capVol - usedVol)) / (avgVol || 0.0001)) : Number.MAX_SAFE_INTEGER;
-                        let canByPeso = capPeso > 0 ? Math.floor(Math.max(0, (capPeso - usedPeso)) / (avgPeso || 0.0001)) : Number.MAX_SAFE_INTEGER;
-
-                        let canAdd = Math.min(canByVol, canByPeso, sobrantesCount);
-                        if (canAdd <= 0) return 0;
-
-                        // Actualizar destino con lo que se pueda añadir
-                        destino.llantasEstimadas = (Number(destino.llantasEstimadas) || 0) + canAdd;
-                        destino.volumen = (Number(destino.volumen) || 0) + (avgVol * canAdd);
-                        destino.peso = (Number(destino.peso) || 0) + (avgPeso * canAdd);
-
-                        // Añadir descripción compacta
-                        const descPiece = (Array.isArray(sobrante.llantas) && sobrante.llantas.length>0) ? (sobrante.llantas[0].descripcion || sobrante.descripciones || 'Sin asignar') : (sobrante.descripciones || 'Sin asignar');
-                        const addDesc = `${canAdd}x ${descPiece}`;
-                        destino.descripciones = (destino.descripciones ? (destino.descripciones + '\n') : '') + addDesc;
-
-                        // Añadir detalle a destino.llantas
-                        if (!Array.isArray(destino.llantas)) destino.llantas = [];
-                        destino.llantas.push({ cantidad: canAdd, descripcion: descPiece });
-
-                        // Reducir sobrante
-                        let remaining = sobrantesCount - canAdd;
-                        if (remaining <= 0) {
-                            // eliminar la fila sobrante completamente
-                            distribucionRef.splice(idxS, 1);
-                        } else {
-                            sobrante.llantasEstimadas = remaining;
-                            sobrante.llantas = [{ cantidad: remaining, descripcion: descPiece }];
-                            sobrante.volumen = (Number(sobrante.volumen) || 0) - (avgVol * canAdd);
-                            sobrante.peso = (Number(sobrante.peso) || 0) - (avgPeso * canAdd);
-                        }
-
-                        console.log(`✅ Transferidos ${canAdd} llantas de 'Sobrantes' → ${economicoDestino}`);
-
-                        // Notificación al usuario
-                        try { Swal.fire({ icon: 'success', title: 'Transferencia realizada', html: `${canAdd} llantas transferidas a <strong>${unidadObj.nombre || economicoDestino}</strong>`, timer: 3000, toast: true, position: 'top-end', showConfirmButton: false }); } catch(e) {}
-
-                        // Recalcular tabla/totales
-                        try { actualizarTablaDistribucion(distribucionRef); } catch(e){}
-                        try { actualizarTotalesDistribucion(distribucionRef); } catch(e){}
-
-                        return canAdd;
-
-                    } catch (e) { console.warn('Error en asignarSobrantesAUnidad:', e); return 0; }
-                }
                 
                 function actualizarTablaDistribucion(distribucion) {
                     const tbody = document.getElementById('tablaDistribucionSugerida');
                     const unidadesFlota = typeof obtenerUnidadesFlota === 'function' ? obtenerUnidadesFlota() : [];
 
-                    // Mostrar todas las filas de la distribución (incluso con 0 asignadas) para
-                    // evitar que al cambiar una unidad las demás "desaparezcan" de la tabla.
-                    // Si desea ver solamente las que tienen asignación, se puede filtrar en la acción
-                    // de 'apartar' para no crear apartados con 0 llantas.
-                    const distribucionValida = Array.isArray(distribucion) ? distribucion.slice() : [];
+                    // Filtrar solo las filas que tienen llantas asignadas (no vacías)
+                    const distribucionValida = distribucion.filter(item => (item.llantasEstimadas || 0) > 0);
 
                     tbody.innerHTML = distribucionValida.map((item, idx) => {
                         // Obtener las descripciones de las llantas
-                        const detallesLlantasText = item.descripciones ? item.descripciones : 'Sin descripciones';
-                        const detallesLlantasHtml = item.descripciones ? item.descripciones.split('\n').join('<br>') : 'Sin descripciones';
+                        const detallesLlantas = item.descripciones ? 
+                            item.descripciones.split('\n').join('<br>') : 
+                            'Sin descripciones';
                         
                         // Agregar estilos para mejor presentación
                         const estiloDescripciones = `
@@ -2371,33 +2098,11 @@ document.addEventListener('DOMContentLoaded', function() {
                         `;
                         
                         // Construir lista de unidades candidatas que soporten este volumen/peso
-                        let candidatos = [];
-                        const esSobrante = (String(item.economico || '').trim() === 'SIN-UNIDAD') || /Sobrantes/i.test(String(item.unidad || ''));
-
-                        if (esSobrante) {
-                            // Para sobrantes: mostrar sólo unidades con datos de capacidad válidos
-                            // y, si es posible, que cubran el volumen/peso requerido.
-                            const reqVol = Math.max(0, parseNumber(item.volumen) || 0);
-                            const reqPeso = Math.max(0, parseNumber(item.peso) || 0);
-
-                            // Filtrar unidades que tengan capacidad conocida (>0)
-                            let candid = (unidadesFlota || []).filter(u => (parseNumber(u.capacidadVolumen) || 0) > 0 && (parseNumber(u.capacidadPeso) || 0) > 0);
-
-                            // Si hay un requerimiento numérico, intentar dejar sólo las que lo cumplan
-                            if (reqVol > 0 || reqPeso > 0) {
-                                const cumplidores = candid.filter(u => (parseNumber(u.capacidadVolumen) || 0) >= reqVol && (parseNumber(u.capacidadPeso) || 0) >= reqPeso);
-                                if (cumplidores.length > 0) candid = cumplidores;
-                            }
-
-                            // Si aún no hay candidatos (pocos datos), dejar las unidades con capacidad conocida
-                            candidatos = candid;
-                        } else {
-                            candidatos = unidadesFlota.filter(u => {
-                                const capVol = parseNumber(u.capacidadVolumen) || 0;
-                                const capPeso = parseNumber(u.capacidadPeso) || 0;
-                                return capVol >= (parseNumber(item.volumen) || 0) && capPeso >= (parseNumber(item.peso) || 0);
-                            });
-                        }
+                        const candidatos = unidadesFlota.filter(u => {
+                            const capVol = parseNumber(u.capacidadVolumen) || 0;
+                            const capPeso = parseNumber(u.capacidadPeso) || 0;
+                            return capVol >= (parseNumber(item.volumen) || 0) && capPeso >= (parseNumber(item.peso) || 0);
+                        });
 
                         // Asegurar que la unidad actualmente asignada esté en la lista
                         let presente = candidatos.find(u => String(u.codigo) === String(item.economico));
@@ -2414,16 +2119,11 @@ document.addEventListener('DOMContentLoaded', function() {
                             }
                         }
 
-                        let opcionesHtml = '';
-                        if (!candidatos || candidatos.length === 0) {
-                            opcionesHtml = `<option value="" disabled>-- No hay unidades compatibles --</option>`;
-                        } else {
-                            opcionesHtml = candidatos.map(u => {
-                                const selected = String(u.codigo) === String(item.economico) ? 'selected' : '';
-                                const label = `${u.nombre || u.unidad || ''} (${u.codigo || u.economico || ''})`;
-                                return `<option value="${u.codigo || ''}" ${selected}>${label}</option>`;
-                            }).join('');
-                        }
+                        const opcionesHtml = candidatos.map(u => {
+                            const selected = String(u.codigo) === String(item.economico) ? 'selected' : '';
+                            const label = `${u.nombre || u.unidad || ''} (${u.codigo || u.economico || ''})`;
+                            return `<option value="${u.codigo || ''}" ${selected}>${label}</option>`;
+                        }).join('');
 
                         return `
                             <tr>
@@ -2433,77 +2133,20 @@ document.addEventListener('DOMContentLoaded', function() {
                                     </select>
                                 </td>
                                 <td>${item.economico || 'N/A'}</td>
-                                <td class="text-center">
-                                    <input type="number" min="0" class="form-control form-control-sm input-llantas" data-economico="${item.economico || ''}" value="${item.llantasEstimadas || 0}">
-                                </td>
-                                <td style="${estiloDescripciones}">
-                                    <textarea class="form-control form-control-sm input-descripciones" data-economico="${item.economico || ''}" rows="2">${detallesLlantasText}</textarea>
-                                </td>
-                                <td class="text-end">
-                                    <input type="number" step="0.01" min="0" class="form-control form-control-sm input-volumen text-end" data-economico="${item.economico || ''}" value="${(item.volumen || 0).toFixed(2)}">
-                                </td>
-                                <td class="text-end">
-                                    <input type="number" step="0.01" min="0" class="form-control form-control-sm input-peso text-end" data-economico="${item.economico || ''}" value="${(item.peso || 0).toFixed(2)}">
-                                </td>
-                                <td class="text-center eficiencia-cell">
-                                    ${(item.eficiencia || 0).toFixed(1)}%
-                                    <button type="button" class="btn btn-sm btn-outline-secondary ms-2 btn-lock-row" data-economico="${item.economico || ''}" title="Bloquear/Desbloquear unidad">🔒</button>
-                                    <span title="Bloqueada: los cambios manuales no serán sobrescritos. Clic para desbloquear" class="badge bg-light text-dark ms-1 lock-indicator" data-economico="${item.economico || ''}" style="display:none;cursor:pointer;">🔒</span>
-                                </td>
+                                <td class="text-center"><strong>${item.llantasEstimadas || 0}</strong></td>
+                                <td style="${estiloDescripciones}">${detallesLlantas}</td>
+                                <td class="text-end">${(item.volumen || 0).toFixed(2)} m³</td>
+                                <td class="text-end">${(item.peso || 0).toFixed(2)} kg</td>
+                                <td class="text-center">${(item.eficiencia || 0).toFixed(1)}%</td>
                             </tr>
                         `;
                     }).join('');
                     
-                    // Actualiar los datos en el botón de apartar (usar solo distribucionValida)
+                    // Actualizar los datos en el botón de apartar (usar solo distribucionValida)
                     const botonApartar = document.querySelector('#botonesDistribucionMultiple button');
                     if (botonApartar) {
                         botonApartar.dataset.unidades = JSON.stringify(distribucionValida);
                     }
-
-                    // Resaltar fila 'Sobrantes' y colocarla al final para mayor visibilidad
-                    try {
-                        const tbodyRows = Array.from(tbody.querySelectorAll('tr'));
-                        // Buscar fila con 'SIN-UNIDAD' o 'Sobrantes' en la segunda celda
-                        for (const row of tbodyRows) {
-                            const econ = String((row.cells[1] && row.cells[1].textContent) || '').trim();
-                            if (econ === 'SIN-UNIDAD' || /Sobrantes/i.test(row.cells[0].textContent || '')) {
-                                row.classList.add('sobrante-row');
-                                row.style.background = '#fff8e1';
-                                row.style.fontWeight = '700';
-                                // Mover al final
-                                tbody.appendChild(row);
-                            }
-                        }
-
-                        // Agregar un badge resumen visible cerca del botón 'Apartar'
-                        const contBotones = document.getElementById('botonesDistribucionMultiple') || document.querySelector('#sugerencia-unidad .card-body');
-                        if (contBotones) {
-                            let badge = document.getElementById('sobrantesSummary');
-                            if (!badge) {
-                                badge = document.createElement('div');
-                                badge.id = 'sobrantesSummary';
-                                badge.style.margin = '8px 0';
-                                badge.style.fontWeight = '700';
-                                badge.style.color = '#856404';
-                                badge.style.background = '#fff3cd';
-                                badge.style.padding = '8px 12px';
-                                badge.style.borderRadius = '6px';
-                                badge.style.display = 'none';
-                                if (contBotones.firstChild) contBotones.insertBefore(badge, contBotones.firstChild);
-                                else contBotones.appendChild(badge);
-                            }
-
-                            // Si hay fila sobrante visible, mostrar el badge con conteo
-                            const sobranteFila = tbody.querySelector('.sobrante-row');
-                            if (sobranteFila) {
-                                const val = Number((sobranteFila.querySelector('.input-llantas') || {}).value || sobranteFila.cells[2].textContent || 0) || 0;
-                                badge.style.display = 'block';
-                                badge.innerHTML = `🟡 <strong>Sobrantes:</strong> ${val} llantas sin asignar`;
-                            } else {
-                                badge.style.display = 'none';
-                            }
-                        }
-                    } catch (e) { console.warn('No se pudo resaltar sobrantes:', e); }
 
                     // Actualizar totales generales tras renderizar la tabla
                     try { actualizarTotalesDistribucion(distribucion); } catch(e) { console.warn(e); }
@@ -2532,104 +2175,25 @@ document.addEventListener('DOMContentLoaded', function() {
                                     const unidadNueva = unidadesFlota.find(u => String(u.codigo) === String(nuevoEconomico));
                                     const economicoPrevio = String(itemActual.economico);
                                     
-                                    // Si la fila anterior era 'Sobrantes' y ahora se selecciona una unidad válida,
-                                    // intentar mover la mayor cantidad posible de sobrantes a la nueva unidad
-                                    try {
-                                        const wasSobrante = String(economicoPrevio || '').trim() === 'SIN-UNIDAD' || /Sobrantes/i.test(String(itemActual.unidad || ''));
-                                        if (wasSobrante && unidadNueva) {
-                                            // mover sobrantes a la unidad nueva (intenta llenar la unidad)
-                                            try {
-                                                asignarSobrantesAUnidad(String(nuevoEconomico), distribucion, unidadesFlota);
-                                            } catch (e) { console.warn('No se pudo transferir sobrantes:', e); }
-
-                                            // Actualizar itemActual referencia (puede haber sido modificado)
-                                            const nuevoItem = distribucion.find(d => String(d.economico) === String(nuevoEconomico));
-                                            if (nuevoItem) {
-                                                itemActual.economico = nuevoItem.economico;
-                                                itemActual.unidad = nuevoItem.unidad || unidadNueva.nombre;
-                                            } else {
-                                                itemActual.economico = nuevoEconomico;
-                                                itemActual.unidad = unidadNueva ? unidadNueva.nombre : itemActual.unidad;
-                                            }
-                                        } else {
-                                            itemActual.economico = nuevoEconomico;
-                                            itemActual.unidad = unidadNueva ? unidadNueva.nombre : itemActual.unidad;
-                                        }
-                                    } catch (e) {
-                                        // ENSURE fallback
-                                        itemActual.economico = nuevoEconomico;
-                                        itemActual.unidad = unidadNueva ? unidadNueva.nombre : itemActual.unidad;
-                                    }
+                                    itemActual.economico = nuevoEconomico;
+                                    itemActual.unidad = unidadNueva ? unidadNueva.nombre : itemActual.unidad;
+                                    
+                                    // === NO BLOQUEAR LA NUEVA UNIDAD INMEDIATAMENTE ===
+                                    // En su lugar, simplemente actualizar el económico en el item.
+                                    // La nueva unidad se recalculará libremente sin ser "fija".
                                     // Esto evita que ambas (vieja y nueva) aparezcan como bloqueadas.
                                     
-                                    // Si había una unidad anterior diferente, intentar mover su estado bloqueado
+                                    // Si había una unidad anterior diferente, desbloquearla
                                     if (typeof window.unidadesBloquedadas === 'undefined') window.unidadesBloquedadas = {};
-
+                                    
                                     if (economicoPrevio && economicoPrevio !== String(nuevoEconomico)) {
                                         try {
-                                            // Si la unidad previa estaba bloqueada (usuario la editó), trasladar la info al nuevo económico
-                                            if (window.unidadesBloquedadas && window.unidadesBloquedadas[economicoPrevio]) {
-                                                window.unidadesBloquedadas[String(nuevoEconomico)] = {
-                                                    ...window.unidadesBloquedadas[economicoPrevio],
-                                                    economico: String(nuevoEconomico)
-                                                };
-                                                delete window.unidadesBloquedadas[economicoPrevio];
-                                                console.log(`[🔁 MOVER BLOQUEADO] ${economicoPrevio} → ${nuevoEconomico}`);
-
-                                                // Actualizar data-economico de inputs en la fila para mantener vínculo
-                                                try {
-                                                    const fila = this.closest('tr');
-                                                    if (fila) {
-                                                        const inputs = fila.querySelectorAll('.input-llantas, .input-descripciones, .input-volumen, .input-peso, .lock-indicator');
-                                                        inputs.forEach(i => { if (i) i.dataset.economico = String(nuevoEconomico); });
-                                                    }
-                                                } catch (e) { /* ignorar */ }
-                                            } else {
-                                                console.log(`[🔓 DESBLOQUEANDO] ${economicoPrevio} (cambio a ${nuevoEconomico})`);
-                                                delete window.unidadesBloquedadas[economicoPrevio];
-                                            }
-                                        } catch (e) { console.warn('Error al mover/desbloquear:', e); }
+                                            console.log(`[🔓 DESBLOQUEANDO] ${economicoPrevio} (cambio a ${nuevoEconomico})`);
+                                            delete window.unidadesBloquedadas[economicoPrevio];
+                                        } catch (e) { console.warn('Error desbloqueando:', e); }
                                     }
                                     
                                     console.log(`[🔄 CAMBIO REGISTRADO] ${economicoPrevio} → ${nuevoEconomico}`);
-
-                                    // Crear bloqueo con los VALORES del itemActual (fuente de la verdad),
-                                    // no con lo que temporalmente haya en el DOM (evita perder piezas).
-                                    try {
-                                        const assignedCount = Number(itemActual.llantasEstimadas || (Array.isArray(itemActual.llantas) ? itemActual.llantas.reduce((s,x)=>s+(x.cantidad||0),0) : 0)) || 0;
-                                        const descText = itemActual.descripciones || '';
-                                        const vol = Number(itemActual.volumen || 0);
-                                        const peso = Number(itemActual.peso || 0);
-
-                                        if (typeof window.unidadesBloquedadas === 'undefined') window.unidadesBloquedadas = {};
-
-                                        window.unidadesBloquedadas[String(nuevoEconomico)] = {
-                                            unidad: unidadNueva ? unidadNueva.nombre : itemActual.unidad || '',
-                                            economico: String(nuevoEconomico),
-                                            llantasAsignadas: assignedCount,
-                                            volumen: vol,
-                                            peso: peso,
-                                            descripciones: descText,
-                                            llantas: (Array.isArray(itemActual.llantas) && itemActual.llantas.length>0) ? JSON.parse(JSON.stringify(itemActual.llantas)) : [{ cantidad: assignedCount, descripcion: descText || 'Sin descripciones' }]
-                                        };
-
-                                        // Asegurar que los inputs en la fila muestren esos valores inmediatamente
-                                        try {
-                                            const fila = this.closest('tr');
-                                            if (fila) {
-                                                const inpL = fila.querySelector('.input-llantas'); if (inpL) inpL.value = assignedCount;
-                                                const inpD = fila.querySelector('.input-descripciones'); if (inpD) inpD.value = descText;
-                                                const inpV = fila.querySelector('.input-volumen'); if (inpV) inpV.value = (vol || 0).toFixed(2);
-                                                const inpP = fila.querySelector('.input-peso'); if (inpP) inpP.value = (peso || 0).toFixed(2);
-                                                const lock = fila.querySelector('.lock-indicator'); if (lock) lock.style.display = 'inline-block';
-                                            }
-                                        } catch (e) { /* ignorar errores de sincronización DOM */ }
-
-                                        console.log('[BLOQUEO][SELECT] Asignado bloqueo para', nuevoEconomico, window.unidadesBloquedadas[String(nuevoEconomico)]);
-                                    } catch (e) {
-                                        console.warn('No se pudo crear bloqueo desde select usando itemActual:', e);
-                                        try { marcarUnidadBloqueadaDesdeFila(this, nuevoEconomico); } catch (er) { console.warn(er); }
-                                    }
                                 }
 
                                 // Recalcular distribución completa (respeta bloqueados SI LOS HAY)
@@ -2660,269 +2224,6 @@ document.addEventListener('DOMContentLoaded', function() {
                             select._changeHandler = handler;
                             select.addEventListener('change', handler);
                         });
-
-                        // Manejar cambios manuales en inputs de la fila (bloquear unidad cuando el usuario edita)
-                        const inputsLlantas = tbody.querySelectorAll('.input-llantas');
-                        const inputsDescripciones = tbody.querySelectorAll('.input-descripciones');
-                        const inputsVolumen = tbody.querySelectorAll('.input-volumen');
-                        const inputsPeso = tbody.querySelectorAll('.input-peso');
-
-                        function marcarUnidadBloqueadaDesdeFila(elem, economicoOverride) {
-                            try {
-                                const filaTR = elem.closest('tr');
-                                const economico = String((economicoOverride || filaTR.cells[1].textContent)).trim();
-                                if (!economico) return;
-
-                                if (typeof window.unidadesBloquedadas === 'undefined') window.unidadesBloquedadas = {};
-
-                                // Leer valores actuales de la fila
-                                const llantasVal = Number((filaTR.querySelector('.input-llantas') || {}).value || 0);
-                                const descripcionesVal = (filaTR.querySelector('.input-descripciones') || {}).value || '';
-                                const volumenVal = Number((filaTR.querySelector('.input-volumen') || {}).value || 0);
-                                const pesoVal = Number((filaTR.querySelector('.input-peso') || {}).value || 0);
-
-                                // Guardar un objeto bloqueado con la info mínima necesaria
-                                const bloqueadoObj = {
-                                    unidad: (filaTR.querySelector('.select-unidad') || {}).selectedOptions?.[0]?.text || '',
-                                    economico: economico,
-                                    llantasAsignadas: llantasVal,
-                                    volumen: volumenVal,
-                                    peso: pesoVal,
-                                    descripciones: descripcionesVal,
-                                    llantas: []
-                                };
-
-                                // Intentar parsear las descripciones a items "Nx descripcion" para mantener
-                                // la consistencia al restar llantas bloqueadas en la redistribución.
-                                try {
-                                    const parsed = [];
-                                    if (descripcionesVal && String(descripcionesVal).trim() && !/sin\s*descrip/i.test(descripcionesVal)) {
-                                        const lines = String(descripcionesVal).split(/\n+/);
-                                        for (const ln of lines) {
-                                            const l = ln.trim();
-                                            if (!l) continue;
-                                            let m = l.match(/^\s*(\d+)\s*[x×]\s*(.+)$/i);
-                                            if (!m) m = l.match(/^\s*(\d+)\s+(.+)$/i);
-                                            if (m) {
-                                                parsed.push({ cantidad: parseInt(m[1],10), descripcion: m[2].trim() });
-                                            } else {
-                                                // Si no tiene cantidad, asumir 1 (o total si única línea)
-                                                parsed.push({ cantidad: 1, descripcion: l });
-                                            }
-                                        }
-                                    }
-
-                                    if (parsed.length === 0) {
-                                        // Sin descripciones claras: guardar una entrada general con la cantidad total
-                                        parsed.push({ cantidad: llantasVal || 0, descripcion: (descripcionesVal && descripcionesVal.trim()) || 'Sin descripciones' });
-                                    }
-
-                                    bloqueadoObj.llantas = parsed;
-                                    // Ajustar llantasAsignadas a la suma parseada (por seguridad)
-                                    bloqueadoObj.llantasAsignadas = parsed.reduce((s, x) => s + (x.cantidad || 0), 0) || llantasVal;
-                                } catch (e) {
-                                    bloqueadoObj.llantas = [{ cantidad: llantasVal, descripcion: descripcionesVal || 'Sin descripciones' }];
-                                }
-
-                                window.unidadesBloquedadas[economico] = bloqueadoObj;
-
-                                // Mostrar indicador visual de bloqueo
-                                const lock = filaTR.querySelector('.lock-indicator');
-                                if (lock) lock.style.display = 'inline-block';
-
-                                console.log('[BLOQUEO] Unidad marcada manualmente:', economico, window.unidadesBloquedadas[economico]);
-
-                                // REGLA ADICIONAL: al bloquear una unidad, recolectar todas las llantas
-                                // asignadas a las demás unidades NO bloqueadas y moverlas a 'Sobrantes'
-                                try {
-                                    if (Array.isArray(distribucion)) {
-                                                // Usar función estricta que fuerza mover TODAS las llantas de unidades no bloqueadas a Sobrantes
-                                        if (typeof forceMoveAllNonBlockedToSobrantes === 'function') forceMoveAllNonBlockedToSobrantes(distribucion);
-
-                                        // Recalcular respetando bloqueados y actualizar tabla/ totales
-                                        (async () => {
-                                            const unidadesFlota = typeof obtenerUnidadesFlota === 'function' ? obtenerUnidadesFlota() : [];
-                                            const distribucionRecalculada = await recalcularDistribucionCompleta(distribucion, unidadesFlota, { respetarBloqueados: true });
-                                            distribucion.length = 0;
-                                            distribucion.push(...distribucionRecalculada);
-                                            actualizarTablaDistribucion(distribucion);
-                                            try { actualizarTotalesDistribucion(distribucion); } catch(e){}
-                                        })();
-                                    }
-                                } catch(e) { console.warn('Error al mover no-bloqueadas a Sobrantes:', e); }
-                            } catch (e) { console.warn('Error al bloquear unidad desde fila:', e); }
-                        }
-
-                        // Agregar handlers de cambio para bloquear y recalcular respetando bloqueados
-                        const attachHandler = (nodeList, opts = {}) => {
-                            nodeList.forEach(inp => {
-                                inp.removeEventListener('change', inp._manualChange || (()=>{}));
-                                const fn = async function (e) {
-                                    marcarUnidadBloqueadaDesdeFila(this);
-
-                                    // Recalcular respetando los bloqueados (solo cuando el usuario confirma el cambio con 'change')
-                                    if (!opts.noRecalcOnChange) {
-                                        const unidadesFlota = typeof obtenerUnidadesFlota === 'function' ? obtenerUnidadesFlota() : [];
-                                        const distribucionRecalculada = await recalcularDistribucionCompleta(distribucion, unidadesFlota, { respetarBloqueados: true });
-                                        distribucion.length = 0;
-                                        distribucion.push(...distribucionRecalculada);
-                                        actualizarTablaDistribucion(distribucion);
-                                        try { actualizarTotalesDistribucion(distribucion); } catch(e){}
-                                    }
-                                };
-                                inp._manualChange = fn;
-                                inp.addEventListener('change', fn);
-
-                                // Si se desea marcar inmediatamente al escribir, agregar 'input' que solo bloquea (no recalcula)
-                                if (opts.immediateMarkOnInput) {
-                                    inp.removeEventListener('input', inp._immediateMark || (()=>{}));
-                                    const markFn = function () { try { marcarUnidadBloqueadaDesdeFila(this); } catch(e){} };
-                                    inp._immediateMark = markFn;
-                                    inp.addEventListener('input', markFn);
-                                }
-                            });
-                        };
-
-                        // Marcar inmediatamente al escribir en llantas y descripciones (UX más responsive)
-                        attachHandler(inputsLlantas, { immediateMarkOnInput: true });
-                        attachHandler(inputsDescripciones, { immediateMarkOnInput: true, noRecalcOnChange: false });
-                        attachHandler(inputsVolumen, {});
-                        attachHandler(inputsPeso, {});
-
-                        // Permitir desbloquear haciendo click en el icono de candado
-                        const locks = tbody.querySelectorAll('.lock-indicator');
-                        locks.forEach(lock => {
-                            lock.removeEventListener('click', lock._click || (()=>{}));
-                            const fn = function () {
-                                const economico = String(this.dataset.economico || '').trim();
-                                if (!economico) return;
-                                if (window.unidadesBloquedadas && window.unidadesBloquedadas[economico]) {
-                                    delete window.unidadesBloquedadas[economico];
-                                    this.style.display = 'none';
-                                    console.log('[DESBLOQUEO] Unidad desbloqueada manualmente:', economico);
-
-                                    // Recalcular tras desbloqueo
-                                    (async () => {
-                                        const unidadesFlota = typeof obtenerUnidadesFlota === 'function' ? obtenerUnidadesFlota() : [];
-                                        const distribucionRecalculada = await recalcularDistribucionCompleta(distribucion, unidadesFlota, { respetarBloqueados: true });
-                                        distribucion.length = 0;
-                                        distribucion.push(...distribucionRecalculada);
-                                        actualizarTablaDistribucion(distribucion);
-                                        try { actualizarTotalesDistribucion(distribucion); } catch(e){}
-                                    })();
-                                }
-                            };
-                            lock._click = fn;
-                            lock.addEventListener('click', fn);
-                        });
-
-                        // Agregar botón específico para bloquear/desbloquear la fila (más explícito y accesible)
-                        const lockBtns = tbody.querySelectorAll('.btn-lock-row');
-                        lockBtns.forEach(btn => {
-                            btn.removeEventListener('click', btn._click || (()=>{}));
-
-                            const fn = async function () {
-                                const economico = String(this.dataset.economico || '').trim();
-                                const fila = this.closest('tr');
-                                if (!fila) return;
-
-                                if (typeof window.unidadesBloquedadas === 'undefined') window.unidadesBloquedadas = {};
-
-                                try {
-                                    // Si ya está bloqueada, desbloqueamos
-                                    if (economico && window.unidadesBloquedadas && window.unidadesBloquedadas[economico]) {
-                                        delete window.unidadesBloquedadas[economico];
-                                        // Visual
-                                        const lockIndicator = fila.querySelector('.lock-indicator'); if (lockIndicator) lockIndicator.style.display = 'none';
-                                        this.textContent = '🔒 Bloquear';
-                                        console.log('[DESBLOQUEO][BTN] Unidad desbloqueada:', economico);
-
-                                        // Recalcular para actualizar tabla
-                                        const unidadesFlota = typeof obtenerUnidadesFlota === 'function' ? obtenerUnidadesFlota() : [];
-                                        const distribucionRecalculada = await recalcularDistribucionCompleta(distribucion, unidadesFlota, { respetarBloqueados: true });
-                                        distribucion.length = 0; distribucion.push(...distribucionRecalculada);
-                                        actualizarTablaDistribucion(distribucion);
-                                        try { actualizarTotalesDistribucion(distribucion); } catch(e){}
-
-                                        return;
-                                    }
-
-                                    // Bloquear la unidad tomando los valores actuales de la fila
-                                    try {
-                                        // Reusar la función existente (acepta elemento y opcional economicoOverride)
-                                        marcarUnidadBloqueadaDesdeFila(this, economico);
-                                    } catch (e) {
-                                        // Fallback: intentar crear el objeto bloqueado manualmente
-                                        try {
-                                            const ll = Number((fila.querySelector('.input-llantas') || {}).value || fila.cells[2].textContent || 0) || 0;
-                                            const des = (fila.querySelector('.input-descripciones') || {}).value || fila.cells[3].textContent || '';
-                                            window.unidadesBloquedadas[economico] = {
-                                                unidad: (fila.querySelector('.select-unidad') || {}).selectedOptions?.[0]?.text || '',
-                                                economico: economico,
-                                                llantasAsignadas: ll,
-                                                volumen: Number((fila.querySelector('.input-volumen') || {}).value || fila.cells[4].textContent || 0) || 0,
-                                                peso: Number((fila.querySelector('.input-peso') || {}).value || fila.cells[5].textContent || 0) || 0,
-                                                descripciones: des,
-                                                llantas: [{ cantidad: ll, descripcion: des || 'Sin descripciones' }]
-                                            };
-                                        } catch (err) { console.warn('No se pudo bloquear con fallback:', err); }
-                                    }
-
-                                    // Visual
-                                    const lockIndicator = fila.querySelector('.lock-indicator'); if (lockIndicator) lockIndicator.style.display = 'inline-block';
-                                    this.textContent = '🔓 Desbloquear';
-                                    console.log('[BLOQUEO][BTN] Unidad bloqueada:', economico, window.unidadesBloquedadas[economico]);
-
-                                    // Regla adicional: al bloquear una unidad, mover todas las llantas de unidades NO bloqueadas a 'Sobrantes'
-                                    try {
-                                        if (typeof moverNoBloqueadasASobrantes === 'function') moverNoBloqueadasASobrantes(distribucion);
-                                    } catch (e) { console.warn('No se pudo mover no-bloqueadas desde botón:', e); }
-
-                                    // Recalcular respetando bloqueos
-                                    try {
-                                        const unidadesFlota = typeof obtenerUnidadesFlota === 'function' ? obtenerUnidadesFlota() : [];
-                                        const distribucionRecalculada = await recalcularDistribucionCompleta(distribucion, unidadesFlota, { respetarBloqueados: true });
-                                        distribucion.length = 0; distribucion.push(...distribucionRecalculada);
-                                        actualizarTablaDistribucion(distribucion);
-                                        try { actualizarTotalesDistribucion(distribucion); } catch(e){}
-                                    } catch (er) { console.warn('Error al recalcular después de bloqueo:', er); }
-
-                                } catch (e) { console.warn('Error manejar bloqueo/desbloqueo:', e); }
-                            };
-
-                            btn._click = fn;
-                            btn.addEventListener('click', fn);
-
-                            // Inicializar estado según existencia de bloqueo
-                            try {
-                                const eco = String(btn.dataset.economico || '').trim();
-                                if (eco && window.unidadesBloquedadas && window.unidadesBloquedadas[eco]) btn.textContent = '🔓 Desbloquear';
-                                else btn.textContent = '🔒 Bloquear';
-                            } catch (e) { btn.textContent = '🔒'; }
-                        });
-
-                        // Mostrar locks para unidades que ya estén bloqueadas (persistencia en sesión)
-                        try {
-                            locks.forEach(l => {
-                                const eco = String(l.dataset.economico || '').trim();
-                                if (eco && window.unidadesBloquedadas && window.unidadesBloquedadas[eco]) {
-                                    l.style.display = 'inline-block';
-                                }
-                            });
-                        } catch (e) { /* ignorar */ }
-
-                        // Loguear resumen por unidad para depuración: economico -> llantasEstimadas
-                        try {
-                            console.log('📋 Resumen por unidad (tabla):');
-                            const filas = tbody.querySelectorAll('tr');
-                            filas.forEach(r => {
-                                try {
-                                    const econ = String(r.cells[1] && r.cells[1].textContent || '').trim();
-                                    const ll = Number((r.querySelector('.input-llantas') || {}).value || r.cells[2].textContent || 0) || 0;
-                                    console.log(` - ${econ || 'N/A'} : ${ll} llantas`);
-                                } catch(e){ /* ignore */ }
-                            });
-                        } catch (e) { console.warn('No se pudo sacar resumen de filas:', e); }
                     }, 50);
 
                         // Decidir si se muestra la sección de Distribución Sugerida.
@@ -2986,9 +2287,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
                         if (!isConfirmed) return;
 
-                        // Registrar solo las unidades que tengan llantas asignadas (> 0)
-                        const porRegistrar = (distribucionActual || []).filter(u => (u.llantasEstimadas || 0) > 0);
-                        for (const unidad of porRegistrar) {
+                        // Registrar cada unidad
+                        for (const unidad of distribucionActual) {
                             await registrarApartado({
                                 fecha: new Date().toISOString(),
                                 responsable: nombreResponsable,
@@ -3070,122 +2370,6 @@ document.addEventListener('DOMContentLoaded', function() {
                     }
 
                     return distribucion;
-                }
-
-                // Helper: detección robusta de bloqueados por económico (trimming seguro)
-                function isEconomicoBloqueado(economico) {
-                    try {
-                        if (!economico) return false;
-                        const keys = Object.keys(window.unidadesBloquedadas || {});
-                        return keys.some(k => String(k || '').trim() === String(economico || '').trim());
-                    } catch (e) { return false; }
-                }
-
-                // Función global: mover todas las llantas asignadas en unidades NO bloqueadas a la fila 'Sobrantes' (SIN-UNIDAD)
-                // Función estricta: fuerza mover TODAS las llantas de unidades NO bloqueadas a Sobrantes
-                function forceMoveAllNonBlockedToSobrantes(distribucionRef) {
-                    try {
-                        if (!Array.isArray(distribucionRef)) return 0;
-
-                        console.log('[FORCE-MOVER] Inicio. Distribucion actual:', distribucionRef.map(d => ({ econ: String(d.economico||'').trim(), unidad: d.unidad, ll: d.llantasEstimadas || 0 })));
-
-                        // Asegurar sincronización con el DOM (como antes)
-                        try {
-                            const tbody = document.getElementById('tablaDistribucionSugerida');
-                            if (tbody) {
-                                const filas = Array.from(tbody.getElementsByTagName('tr'));
-                                for (const fila of filas) {
-                                    try {
-                                        const eco = String((fila.cells[1] && fila.cells[1].textContent) || '').trim();
-                                        const unidadName = String((fila.cells[0] && fila.cells[0].textContent) || '').trim();
-                                        const ll = Number((fila.querySelector('.input-llantas') || {}).value || fila.cells[2].textContent || 0) || 0;
-                                        const desc = (fila.querySelector('.input-descripciones') || {}).value || fila.cells[3].textContent || '';
-                                        const vol = parseNumber(fila.cells[4] && fila.cells[4].textContent) || 0;
-                                        const peso = parseNumber(fila.cells[5] && fila.cells[5].textContent) || 0;
-
-                                        let match = null;
-                                        if (eco) match = distribucionRef.find(d => String(d.economico || '').trim() === eco);
-                                        if (!match && unidadName) match = distribucionRef.find(d => String(d.unidad || '').trim() === unidadName);
-                                        if (!match && !eco) match = distribucionRef.find(d => !String(d.economico || '').trim());
-
-                                        if (match) {
-                                            match.llantasEstimadas = ll;
-                                            match.descripciones = desc;
-                                            match.volumen = vol;
-                                            match.peso = peso;
-                                            if (!Array.isArray(match.llantas) || match.llantas.length === 0) match.llantas = [{ cantidad: ll, descripcion: desc || 'Sin descripciones' }];
-                                        } else {
-                                            distribucionRef.push({ unidad: unidadName || 'Sin unidad', economico: eco || '', llantasEstimadas: ll, descripciones: desc || '', volumen: vol, peso: peso, eficiencia: 0, llantas: [{ cantidad: ll, descripcion: desc || 'Sin descripciones' }] });
-                                        }
-                                    } catch(e){ /* ignore row */ }
-                                }
-                            }
-                        } catch(e) { console.warn('[FORCE-MOVER] No se pudo sincronizar DOM:', e); }
-
-                        // Ahora, forzar recolección: coger todas las llantas de items que NO estén bloqueados
-                        let totalMovido = 0; let volMov = 0; let pesoMov = 0; const detalles = [];
-
-                        for (const item of distribucionRef) {
-                            const eco = String(item.economico || '').trim();
-                            if (eco === 'SIN-UNIDAD') continue;
-                            const estaBloqueada = eco && isEconomicoBloqueado(eco);
-                            if (estaBloqueada) { console.log(`[FORCE-MOVER] Omitida bloqueada: ${eco}`); continue; }
-
-                            const cantidad = Number(item.llantasEstimadas || (Array.isArray(item.llantas) ? item.llantas.reduce((s,x)=>s+(Number(x.cantidad||0)||0),0) : 0)) || 0;
-                            if (cantidad <= 0) continue;
-
-                            detalles.push(`${cantidad}x ${item.descripciones || item.llantas?.[0]?.descripcion || 'Sin descripcion'} (${eco || item.unidad})`);
-                            totalMovido += cantidad;
-                            volMov += Number(item.volumen || 0) || 0;
-                            pesoMov += Number(item.peso || 0) || 0;
-
-                            // Poner a cero en la unidad
-                            item.llantasEstimadas = 0; item.llantas = []; item.descripciones = ''; item.volumen = 0; item.peso = 0;
-                        }
-
-                        if (totalMovido > 0) {
-                            let sobr = distribucionRef.find(d => String(d.economico || '') === 'SIN-UNIDAD');
-                            if (!sobr) {
-                                sobr = { unidad: 'Sobrantes', economico: 'SIN-UNIDAD', llantasEstimadas: 0, volumen: 0, peso: 0, eficiencia: 0, descripciones: '', llantas: [] };
-                                distribucionRef.push(sobr);
-                            }
-
-                            sobr.llantasEstimadas = (Number(sobr.llantasEstimadas) || 0) + totalMovido;
-                            sobr.volumen = (Number(sobr.volumen) || 0) + volMov;
-                            sobr.peso = (Number(sobr.peso) || 0) + pesoMov;
-                            sobr.descripciones = (sobr.descripciones ? (sobr.descripciones + '\n') : '') + detalles.join('\n');
-                            sobr.llantas = (Array.isArray(sobr.llantas) ? sobr.llantas : []).concat([{ cantidad: totalMovido, descripcion: 'Recoleccion forzada tras bloqueo' }]);
-
-                            console.log(`[FORCE-MOVER] Movidos TOTAL ${totalMovido} llantas a SIN-UNIDAD. Detalle:`, detalles);
-
-                            // Restar de la fuente de redistribución si existe
-                            try {
-                                let restante = totalMovido;
-                                if (Array.isArray(window.llantasAcumuladasEnBloque) && restante > 0) {
-                                    for (let i = 0; i < window.llantasAcumuladasEnBloque.length && restante > 0; i++) {
-                                        const it = window.llantasAcumuladasEnBloque[i];
-                                        const cant = parseInt(it.Cantidad || it.cantidad || 0, 10) || 0;
-                                        if (cant <= 0) continue;
-                                        const quitar = Math.min(cant, restante);
-                                        if (typeof it.Cantidad !== 'undefined') it.Cantidad = cant - quitar; else it.cantidad = cant - quitar;
-                                        restante -= quitar;
-                                    }
-                                    window.llantasAcumuladasEnBloque = window.llantasAcumuladasEnBloque.filter(it => (parseInt(it.Cantidad || it.cantidad || 0, 10) || 0) > 0);
-                                }
-                                if (restante > 0) console.warn('[FORCE-MOVER] No se quitaron todas las piezas de la fuente, restante:', restante);
-                                else console.log('[FORCE-MOVER] Fuente de redistribución actualizada');
-                            } catch(e) { console.warn('[FORCE-MOVER] Error actualizando fuente:', e); }
-
-                            try { Swal.fire({ icon: 'info', title: 'Recolección forzada', html: `Se movieron <strong>${totalMovido}</strong> llantas a <strong>Sobrantes</strong> al bloquear una unidad.`, timer: 4500, toast: true, position: 'top-end', showConfirmButton: false }); } catch(e){}
-
-                            try { actualizarTablaDistribucion(distribucionRef); } catch(e){}
-                            try { actualizarTotalesDistribucion(distribucionRef); } catch(e){}
-                        } else {
-                            console.log('[FORCE-MOVER] No se movieron piezas (sin piezas en unidades no bloqueadas)');
-                        }
-
-                        return totalMovido;
-                    } catch (e) { console.warn('Error forceMoveAllNonBlockedToSobrantes:', e); return 0; }
                 }
             </script>
             <div class="accordion mb-3" id="acordeonDistribucionMultiple">
@@ -3564,57 +2748,14 @@ function safeNum(v) {
             let last = parts[parts.length - 1];
             // limpiar paréntesis o símbolos remanentes
             last = last.replace(/^[\(\-\_]+|[\)\-\_]+$/g, '');
-            // Si el último token es un código corto alfanumérico muy corto (<=4 caracteres), lo removemos
-            // Esto evita eliminar modelos importantes como "MG111" (5 caracteres)
-            if (/^[A-Za-z0-9]{1,4}$/.test(last)) {
+            // Si el último token es un código corto alfanumérico como H87, AB123, etc., lo removemos
+            if (/^[A-Z]{1,5}\d{1,5}$/i.test(last)) {
                 parts.pop();
                 return parts.join(' ').trim();
             }
             return str;
         } catch (e) {
             return String(s).trim();
-        }
-    }
-
-    // Nueva regla: Valida que la descripción solo contenga caracteres permitidos
-    // Caracteres permitidos: letras, números, espacios, paréntesis (), puntos, barras /, guiones - y guiones bajos _
-    // Rechaza: !"·& y otros caracteres especiales no permitidos
-    function validarCaracteresFacturaDesc(s) {
-        if (!s && s !== 0) return { valido: true, mensaje: '' };
-        try {
-            let str = String(s).trim();
-            if (!str) return { valido: true, mensaje: '' };
-            
-            // Expresión regular que solo permite: letras (a-z, A-Z), números (0-9), espacios, paréntesis, puntos, barras, guiones y guiones bajos
-            const regexPermitida = /^[a-zA-Z0-9\s\(\)\.\-_/]*$/;
-            
-            if (!regexPermitida.test(str)) {
-                // Encontrar caracteres no permitidos
-                const caracteresNoPermitidos = str.match(/[^a-zA-Z0-9\s\(\)\.\-_/]/g);
-                const caracteresUnicos = [...new Set(caracteresNoPermitidos)].join('');
-                return { 
-                    valido: false, 
-                    mensaje: `Caracteres no permitidos en descripción: ${caracteresUnicos}. Solo se permiten: letras, números, espacios, paréntesis (), puntos, barras /, guiones - y guiones bajos _` 
-                };
-            }
-            
-            return { valido: true, mensaje: '' };
-        } catch (e) {
-            return { valido: false, mensaje: 'Error al validar descripción' };
-        }
-    }
-
-    // Helper para mostrar mensajes transitorios en la pestaña de Facturas
-    function showTransientMessage(container, html, timeout = 5000) {
-        try {
-            if (!container) return;
-            // Añadir clase 'transient-factura-msg' para poder localizar y eliminar después
-            const wrapped = html.replace(/class="/i, 'class="transient-factura-msg ');
-            container.innerHTML = wrapped;
-            const el = container.querySelector('.transient-factura-msg');
-            if (el) setTimeout(() => { if (el.parentNode) el.parentNode.removeChild(el); }, timeout);
-        } catch (e) {
-            console.warn('showTransientMessage error', e);
         }
     }
 
@@ -5444,9 +4585,7 @@ async function procesarBloquetraspasos(datos) {
         const producto = datos[idx];
         const codigoProd = producto.Código?.toString?.() || producto.codigo?.toString?.() || '';
         const descripcionProd = sanitizeFacturaDesc((producto.Descripción || producto.Descripcion || producto.descripcion || '').toString());
-        const cantidad = Number(producto.Cantidad ?? producto.cantidad ?? producto.CANTIDAD ?? producto.qty ?? producto.Qty) || 1;
-        // Guardar la propiedad normalizada para uso posterior
-        producto.Cantidad = cantidad;
+        const cantidad = Number(producto.Cantidad) || 1;
 
         console.log(`   [${idx + 1}/${datos.length}] Procesando: código="${codigoProd}", desc="${descripcionProd}", cantidad=${cantidad}`);
 
@@ -10429,11 +9568,7 @@ async function processFiles() {
                 continue;
             }
 
-            const p = document.createElement('p');
-            p.className = 'transient-factura-msg';
-            p.textContent = `Procesando: ${file.name}...`;
-            logDiv.appendChild(p);
-            setTimeout(() => { if (p.parentNode) p.parentNode.removeChild(p); }, 5000);
+            logDiv.innerHTML += `<p>Procesando: ${file.name}...</p>`;
             
             try {
                 const { fecha, productos } = await extractDataFromPDF(file);
@@ -10559,18 +9694,10 @@ async function processFiles() {
 
                             if (!codigo || !descripcion) return null;
 
-                            // NUEVA REGLA: Validar que la descripción solo contenga caracteres permitidos
-                            const validacionCaracteres = validarCaracteresFacturaDesc(descripcion);
-                            if (!validacionCaracteres.valido) {
-                                console.warn('Descripción rechazada por caracteres no permitidos:', descripcion, validacionCaracteres.mensaje);
-                                return null;
-                            }
-
                             const validaciones = {
                                 codigo: /^[A-Z0-9\-\.\/()]{2,}$/i.test(codigo),
                                 cantidad: !isNaN(cantidad) && cantidad > 0,
-                                descripcion: descripcion.length >= 5,
-                                caracteres: validacionCaracteres.valido
+                                descripcion: descripcion.length >= 5
                             };
 
                             if (Object.values(validaciones).every(v => v)) {
@@ -10696,7 +9823,7 @@ async function preprocessImage(imageData) {
 function mostrarEscaneosPendientes() {
     const div = document.getElementById('extractedData');
     if (escaneosActuales.length === 0) {
-        showTransientMessage(div, '<p class="alert alert-warning">No hay datos para mostrar.</p>', 5000);
+        div.innerHTML = '<p class="alert alert-warning">No hay datos para mostrar.</p>';
         return;
     }
 
@@ -10819,8 +9946,8 @@ async function extractDataFromPDF(file) {
     let fechaMatch = fullText.match(fechaRegex);
     let fecha = fechaMatch ? fechaMatch[1] : new Date().toISOString().split('T')[0];
 
-    // Extraer productos (mejorado para tamaños como 11R24.5 y líneas sin cantidad explícita)
-    const productoRegex = /(\d+)\s*(pz|PZ|un|UN|UN\.|u[nN]\.?)\s+([A-Z0-9.\-]+)\s+([A-Z0-9\s.\-\/\(\)]+)/gi;
+    // Extraer productos
+    const productoRegex = /(\d+)\s*(pz|PZ|un|UN|UN\.|u[nN]\.?)\s+([A-Z0-9\-]+)\s+([A-Z0-9\s.\-\/]+)/g;
     const productos = [];
     let match;
     while ((match = productoRegex.exec(fullText)) !== null) {
@@ -10828,22 +9955,6 @@ async function extractDataFromPDF(file) {
         const codigo = match[3].trim();
         const descripcion = sanitizeFacturaDesc(match[4].trim().replace(/\s+/g, " "));
         productos.push({ cantidad, codigo, descripcion });
-    }
-
-    // Fallback: líneas que empiezan con un tamaño (ej. "11R24.5 DIRECCION MIRAGE MG111 (18)")
-    if (productos.length === 0) {
-        const lines = fullText.split(/\n+/).map(l => l.trim()).filter(Boolean);
-        const sizeLineRegex = /^([0-9]{1,3}(?:\.\d+)?R\d{1,2}(?:\.\d+)?)[\s\-]+(.+?)(?:\s*\((\d+)\))?$/i;
-        for (const line of lines) {
-            const m = line.match(sizeLineRegex);
-            if (m) {
-                const codigo = m[1].trim();
-                const descripcionRaw = m[2].trim();
-                const cantidad = m[3] ? parseInt(m[3], 10) : 1;
-                const descripcion = sanitizeFacturaDesc(descripcionRaw.replace(/\s+/g, " "));
-                productos.push({ cantidad, codigo, descripcion });
-            }
-        }
     }
 
     return { fecha, productos };
@@ -10856,21 +9967,6 @@ async function calcularVolumenLlanta(descripcion) {
 
     // Patrones para diferentes tipos de llantas
     const patrones = [
-        // 0. Formatos agrícolas especiales tipo 30.5LR32, 30.5 L R 32, 30.5L-R32 etc.
-        {
-            // buscar el patrón en cualquier parte de la descripción, permitir espacios entre L y R
-            regex: /(\d+(?:\.\d+)?)[\s]*L?\s*R[\s-]*(\d{2,3})/i,
-            calc: (m, desc = '') => {
-                const ancho = Number(m[1]) * 25.4 / 1000; // pulgadas a metros
-                const rin = Number(m[2]) * 0.0254; // pulgada a metro
-                // Base de cálculo similar a agrícolas: volumen aproximado por cilindro anular
-                let factor = 1.45; // factor base agrícola
-                const d = (desc || '').toUpperCase();
-                if (d.includes('AGRO') || d.includes('AGRIC') || d.includes('FARM')) factor *= 1.02;
-                if (d.includes('FORERUNNER') || d.includes('QH741')) factor *= 1.0; // mantener neutro si marca conocida
-                return Math.PI * Math.pow((rin + ancho) / 2, 2) * ancho * factor;
-            }
-        },
         // 1. Llantas de auto/camioneta (ej: 195/65 R15, 205/55 R16)
         {
             regex: /^(\d{3})[\s\/](\d{2})[\s\/]?R(\d{2})/i,
@@ -11229,7 +10325,8 @@ async function cargarEscaneosGuardados(filtro = '', silencioso = false) {
                                     <li class="list-group-item">
                                         <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
                                             <div><strong>Código:</strong> ${codigo}</div>
-                                            <div><strong>Cantidad:</strong> ${item.Cantidad || 1}</div>
+                                            <div><strong>Archivo:</strong> ${archivo}</div>
+                                            <div><strong>Fecha:</strong> ${fecha}</div>
                                         </div>
                                         <div style="margin-top:6px;"><strong>Descripción:</strong> ${descSan || ''}</div>
                                     </li>
@@ -13411,32 +12508,22 @@ function normalizeFacturaContainers() {
 
 // Event listener para el botón de limpiar caché
 document.getElementById('traspasosEspecialesCacheClearBtn').onclick = () => {
-    if (!confirm('¿Estás seguro de que deseas eliminar todos los datos en caché de traspasos especiales?')) return;
-
-    // Prefijos comunes usados por la pestaña de Facturas / OCR
-    const prefixes = ['factura_especial_', 'pdf_', 'cache_', 'factura_'];
-    const cacheKeys = Object.keys(localStorage).filter(key => prefixes.some(p => key.startsWith(p)));
-
-    // Eliminar claves encontradas
-    cacheKeys.forEach(key => localStorage.removeItem(key));
-
-    // Limpiar estructuras en memoria e interfaz independientemente de si había claves locales
-    try { if (typeof archivosEscaneados !== 'undefined') archivosEscaneados = []; } catch(e){}
-    try { if (typeof extractedData !== 'undefined') extractedData = []; } catch(e){}
-    try { if (typeof bloquesfacturas !== 'undefined') bloquesfacturas = []; } catch(e){}
-
-    const extractedDiv = document.getElementById('extractedData'); if (extractedDiv) extractedDiv.innerHTML = '';
-    const facturaContainer = document.getElementById('facturaGroupsContainer_facturas'); if (facturaContainer) facturaContainer.innerHTML = '';
-    const logEl = document.getElementById('log'); if (logEl) { logEl.style.display = 'none'; logEl.innerHTML = ''; }
-    const fileInput = document.getElementById('fileInput'); if (fileInput) fileInput.value = '';
-
-    // Forzar refresco de la lista de bloques de facturas
-    try { if (typeof actualizarBloquesfacturas === 'function') actualizarBloquesfacturas(); } catch(e){ console.warn('Error refrescando bloques de facturas después de limpiar caché', e); }
-
-    if (cacheKeys.length > 0) {
-        alert(`Caché limpiado (${cacheKeys.length} entradas eliminadas)`);
-    } else {
-        alert('Se limpió la caché local (no se encontraron entradas específicas), interfaz reiniciada.');
+    if (confirm('¿Estás seguro de que deseas eliminar todos los datos en caché de traspasos especiales?')) {
+        const cacheKeys = Object.keys(localStorage).filter(key => 
+            key.startsWith('factura_especial_')
+        );
+        
+        if (cacheKeys.length > 0) {
+            cacheKeys.forEach(key => localStorage.removeItem(key));
+            alert('Caché de traspasos especiales limpiado exitosamente');
+            
+            // Limpiar también la interfaz
+            document.getElementById('extractedData').innerHTML = '';
+            document.getElementById('log').style.display = 'none';
+            document.getElementById('fileInput').value = '';
+        } else {
+            alert('No hay datos en caché para limpiar');
+        }
     }
 };
 
@@ -14280,7 +13367,7 @@ function mostrarBloquesfacturas(filtro = '') {
 
     if (!bloquesfacturas || bloquesfacturas.length === 0) {
         console.log('No hay bloques de facturas para mostrar');
-        showTransientMessage(container, '<div class="alert alert-info">No hay facturas guardadas.</div>', 5000);
+        container.innerHTML = '<div class="alert alert-info">No hay facturas guardadas.</div>';
         return;
     }
 
@@ -14359,18 +13446,8 @@ async function actualizarBloquesfacturas() {
         const res = await fetch('https://sheetdb.io/api/v1/jj6hd0ccjrtbu?sheet=Facturas');
         if (!res.ok) throw new Error(`No se pudo cargar facturas. Status: ${res.status}`);
         
-        let facturas = await res.json();
-        // Normalizar y asegurar que cada registro tenga una propiedad numérica `Cantidad`
-        try {
-            facturas = (Array.isArray(facturas) ? facturas : []).map(f => {
-                const cantidadVal = Number(f.Cantidad ?? f.cantidad ?? f.CANTIDAD ?? f.qty ?? f.Qty ?? 1) || 1;
-                return { ...f, Cantidad: cantidadVal };
-            });
-        } catch (e) {
-            console.warn('No se pudo normalizar campo Cantidad en facturas:', e);
-        }
-
-        console.log('Datos recibidos de la hoja Facturas (normalizados):', facturas.slice(0, 6));
+        const facturas = await res.json();
+        console.log('Datos recibidos de la hoja Facturas:', facturas);
 
         if (!Array.isArray(facturas) || facturas.length === 0) {
             console.log('No hay facturas en la hoja. Mostrando datos locales en caché...');
@@ -16994,7 +16071,7 @@ async function generarPDFPedidosApartados() {
             timer: 2000,
             showConfirmButton: false
         });
-    } catch (error) {  
+    } catch (error) {
         // Mostrar mensaje de error
         Swal.fire({
             icon: 'error',

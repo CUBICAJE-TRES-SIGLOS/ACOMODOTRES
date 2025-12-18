@@ -2424,7 +2424,6 @@ document.addEventListener('DOMContentLoaded', function() {
                     </div>
                 </div>
             </div>
-
             <!-- Sección de Unidad Sugerida -->
                 <div id="seccionUnidadSugeridaPrincipal" class="card mb-3" style="display: none;">
                     <div class="card-header bg-info text-white">
@@ -2456,8 +2455,6 @@ document.addEventListener('DOMContentLoaded', function() {
             </div>
         </div>
      </div>        
-              
-
     <!-- Pedidos Apartados -->
     <div id="pedidos-Apartados" class="tabcontent" style="max-width: 1200px;">
         <h3>Pedidos Apartados</h3>
@@ -3098,7 +3095,7 @@ async function agregarBloquePorFolioPedido(agregarMas = false) {
 
         if (traspasosRecientes.length > 0) {
             console.log("Encontrado en traspasos recién escaneadas:", traspasosRecientes);
-            await procesarBloquetraspasos(traspasosRecientes);
+            await procesarBloquetraspasos(traspasosRecientes, folio);
             productosAgregados = true;
         }                   
 
@@ -3128,7 +3125,7 @@ async function agregarBloquePorFolioPedido(agregarMas = false) {
                 if (escaneadosDelFolio.length > 0) {
                     console.log("Encontrado en FACTURAS:", escaneadosDelFolio);
                     try {
-                        await procesarBloquetraspasos(escaneadosDelFolio);
+                        await procesarBloquetraspasos(escaneadosDelFolio, folio);
                         productosAgregados = true;
                     } catch (e) {
                         console.error('Error al procesar productos de FACTURAS:', e);
@@ -3174,7 +3171,7 @@ async function agregarBloquePorFolioPedido(agregarMas = false) {
                 });
                 if (traspasosDelFolio.length > 0) {
                     console.log("Encontrado en traspasos (sheet):", traspasosDelFolio.length, "registros");
-                    await procesarBloquetraspasos(traspasosDelFolio);
+                    await procesarBloquetraspasos(traspasosDelFolio, folio);
                     productosAgregados = true;
                 } else {
                     console.log("❌ NO SE ENCONTRARON COINCIDENCIAS EN TRASPASOS (sheet)");
@@ -3194,7 +3191,7 @@ async function agregarBloquePorFolioPedido(agregarMas = false) {
         if (bloquesFactura.length > 0) {
             console.log("Encontrado en bloques de traspasos:", bloquesFactura);
             for (const bloque of bloquesFactura) {
-                await procesarBloquetraspasos(bloque.datos);
+                await procesarBloquetraspasos(bloque.datos, folio);
             }
             productosAgregados = true;
         }
@@ -3217,7 +3214,7 @@ async function agregarBloquePorFolioPedido(agregarMas = false) {
                 if (reservadosDelFolio.length > 0) {
                     console.log("Encontrado en reservados:", reservadosDelFolio);
                     try {
-                        await procesarBloquetraspasos(reservadosDelFolio);
+                        await procesarBloquetraspasos(reservadosDelFolio, folio);
                         productosAgregados = true;
                     } catch (e) {
                         console.error('Error al procesar reservados:', e);
@@ -4080,7 +4077,7 @@ async function agregarBloqueEnModo(continuarAgregando = false) {
             
             // Procesar el bloque encontrado
             try {
-                await procesarBloquetraspasos(llantasParaAgregar);
+                await procesarBloquetraspasos(llantasParaAgregar, folio);
             } catch (e) {
                 console.error('Error al procesar bloque:', e);
                 divResultado.innerHTML = `
@@ -4569,11 +4566,45 @@ async function actualizarTablaLlantasBloque(llantas) {
 
 
 // Funciones auxiliares para procesar cada tipo de bloque
-async function procesarBloquetraspasos(datos) {
+async function procesarBloquetraspasos(datos, blockId = null) {
     console.log('🔵 [PROCESAMIENTO DE BLOQUE] Iniciando procesamiento...');
     console.log('   Productos totales en datos:', datos.length);
     console.log('   Datos:', datos);
     
+    // Crear una huella única para el bloque: preferir el blockId (folio) si está disponible.
+    let fingerprint;
+    try {
+        if (blockId) {
+            fingerprint = `F:${String(blockId)}`;
+        } else {
+            // Agregar por código y cantidad para generar un fingerprint estable y ordenado
+            const agg = {};
+            (datos || []).forEach(p => {
+                const code = String(p.Codigo || p.codigo || p.Codigo || '').trim();
+                const qty = Number(p.Cantidad || p.cantidad || p.Cantidad || 0) || 0;
+                if (!code) return;
+                agg[code] = (agg[code] || 0) + qty;
+            });
+            const entries = Object.keys(agg).sort().map(k => `${k}:${agg[k]}`);
+            fingerprint = `H:${entries.join('|')}`;
+        }
+    } catch (e) {
+        console.warn('Error calculando fingerprint del bloque:', e);
+        fingerprint = `H:UNKNOWN_${Date.now()}`;
+    }
+
+    // Si ya procesamos este bloque, omitimos para evitar duplicados
+    if (bloquesPedidosAgregados.has(fingerprint)) {
+        console.log(`Omitido: Bloque ya agregado (fingerprint=${fingerprint})`);
+        // Mensaje al usuario si hay un elemento de resultado visible
+        try {
+            const divResultado = document.getElementById('bloqueBuscadoPedido');
+            if (divResultado) divResultado.innerHTML = `<div class="alert alert-warning mt-2">Este bloque ya fue agregado al pedido anteriormente.</div>`;
+            mostrarMensaje && mostrarMensaje('Este bloque ya fue agregado al pedido.', 'warning');
+        } catch (e) { /* ignore */ }
+        return; // No procesar de nuevo
+    }
+
     let seAgregaron = false;
     const nuevosParaINVENTARIO = [];
     let productosEnINVENTARIO = 0;
@@ -4687,6 +4718,9 @@ async function procesarBloquetraspasos(datos) {
             console.warn('❌ No se pudieron agregar automáticamente los nuevos productos al INVENTARIO:', e);
         }
     }
+
+    // Registrar fingerprint para evitar re-agregados futuros
+    try { if (fingerprint && !bloquesPedidosAgregados.has(fingerprint)) bloquesPedidosAgregados.add(fingerprint); } catch(e){console.warn('No se pudo registrar fingerprint:', e);} 
 
     renderPedidosActuales();
     actualizarGraficas();
@@ -8986,6 +9020,7 @@ function clearEverything(options = {}) {
     try { if (typeof distribucionBloqueada !== 'undefined') distribucionBloqueada = []; } catch(e){}
     try { if (typeof traspasosParaGuardar !== 'undefined') traspasosParaGuardar = []; } catch(e){}
     try { if (typeof archivosEscaneados !== 'undefined') archivosEscaneados = []; } catch(e){}
+    try { if (typeof bloquesPedidosAgregados !== 'undefined') bloquesPedidosAgregados.clear(); } catch(e){}
 
     // Window-scoped props
     try { if (typeof window.unidadesBloquedadas !== 'undefined') window.unidadesBloquedadas = {}; } catch(e){}
@@ -12458,6 +12493,7 @@ let bloquestraspasos = [];
 let bloquesFACTURAS = []; // almacenar bloques cargados desde la hoja 'FACTURAS'
 let archivosEscaneados = []; 
 let traspasosParaGuardar = [];
+const bloquesPedidosAgregados = new Set();
 let llantasAcumuladasEnBloque = []; // Variable para acumular llantas en el modo de búsqueda
 
 // Variables nuevas para el sistema de bloques
